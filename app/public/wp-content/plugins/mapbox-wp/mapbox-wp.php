@@ -42,7 +42,7 @@ function enqueue_mapbox(){
         'my-mapbox-init',
         'mapboxConfig',
         array(
-            'accessToken' =>
+            'accessToken' => 'YOUR_MAPBOX_TOKEN_HERE'
         )
     );
 }
