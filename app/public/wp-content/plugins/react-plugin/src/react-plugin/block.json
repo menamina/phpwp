@@ -13,7 +13,8 @@
 			"type": "string"
 		},
 		"limit": {
-			"type": "number"
+			"type": "number",
+			"default": 100
 		}
 	},
 	"supports": {

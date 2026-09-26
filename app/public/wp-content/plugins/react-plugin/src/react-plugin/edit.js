@@ -11,7 +11,8 @@ import { __ } from '@wordpress/i18n';
  * @see https://developer.wordpress.org/block-editor/reference-guides/packages/packages-block-editor/#useblockprops
  */
 import { useBlockProps, InspectorControls } from '@wordpress/block-editor';
-import { TextControl, PanelBody, RangeControl } from "@wordpress/components"
+import { TextControl, PanelBody, RangeControl } from "@wordpress/components";
+import ServerSideRender from '@wordpress/server-side-render';
 /**
  * Lets webpack process CSS, SASS or SCSS files referenced in JavaScript files.
  * Those files can contain any CSS code that gets applied to the editor.
@@ -28,17 +29,38 @@ import './editor.scss';
  *
  * @return {Element} Element to render.
  */
-export default function Edit( {attributes} ) {
+export default function Edit( {attributes, setAttributes} ) {
+	const { airport, limit } = attributes;
+
 	return (
 		<>
 		<InspectorControls>
-			<PanelBody title="testing">
-				Testing
+			<PanelBody title={ __("Airport Settings", "react-plugin" )}>
+				<TextControl
+					label="Airport Code"
+					value={airport || ''}
+					onChange={(value) => setAttributes({airport: value.toUpperCase().slice(0, 3)})}
+					maxLength={3}
+					help="3-letter IATA code (e.g., LAX, JFK, ORD)"
+					placeholder="LAX"
+				/>
+				<RangeControl
+					label="Max flights to fetch from API"
+					min={1}
+					max={100}
+					value={limit}
+					onChange={(value) => setAttributes({limit: value})}
+					help="Increase this to fetch more flights from the API (may find more airports)"
+				/>
 			</PanelBody>
 		</InspectorControls>
-		<p { ...useBlockProps() }>
-			{ __( 'hello!', 'react-plugin' ) }
-		</p>
+
+		<div { ...useBlockProps() }>
+			<ServerSideRender
+				block="create-block/react-plugin"
+				attributes={attributes}
+			/>
+		</div>
 		</>
 	);
 }

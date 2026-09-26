@@ -1,0 +1,16 @@
+# WordPress config (contains secrets)
+app/public/wp-config.php
+
+# Environment files
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Node modules
+node_modules/
+
+# Build files
+build/
+dist/

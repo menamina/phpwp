@@ -18,7 +18,8 @@ return array(
 				'type' => 'string'
 			),
 			'limit' => array(
-				'type' => 'number'
+				'type' => 'number',
+				'default' => 100
 			)
 		),
 		'supports' => array(
