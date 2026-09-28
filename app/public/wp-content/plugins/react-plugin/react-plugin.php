@@ -29,44 +29,44 @@ function create_block_react_plugin_block_init() {
 }
 add_action( 'init', 'create_block_react_plugin_block_init' );
 
-function get_cached_flights($airport, $limit = 100){
-    $cacheKey = "flightData_{$airport}_{$limit}";
+// function get_cached_flights($airport, $limit = 100){
+//     $cacheKey = "flightData_{$airport}_{$limit}";
 
-    $cache = get_transient($cacheKey);
-    if ($cache){
-        return $cache;
-    }
+//     $cache = get_transient($cacheKey);
+//     if ($cache){
+//         return $cache;
+//     }
   
-    $data = getFlightAPIData($airport, $limit);
+//     $data = getFlightAPIData($airport, $limit);
 
-    set_transient($cacheKey, $data, 180);
+//     set_transient($cacheKey, $data, 180);
 
-    return $data;
-}
+//     return $data;
+// }
 
-function getFlightAPIData($airport, $limit){
-    $api_key = '7db0d516b096fa10389900afc2e4e375';
+// function getFlightAPIData($airport, $limit){
+//     $api_key = '7db0d516b096fa10389900afc2e4e375';
 
-    $url = "https://api.aviationstack.com/v1/flights?access_key={$api_key}&limit={$limit}";
+//     $url = "https://api.aviationstack.com/v1/flights?access_key={$api_key}&limit={$limit}";
 
-    $response = wp_remote_get($url);
-    $all_data = json_decode(wp_remote_retrieve_body($response), true);
+//     $response = wp_remote_get($url);
+//     $all_data = json_decode(wp_remote_retrieve_body($response), true);
 
 
-    // if (!empty($airport) && isset($all_data['data'])) {
+//     // if (!empty($airport) && isset($all_data['data'])) {
 
-    //     $filtered = [];
-    //     foreach ($all_data['data'] as $flight) {
-    //         $departure_iata = $flight['departure']['iata'] ?? 'NONE';
+//     //     $filtered = [];
+//     //     foreach ($all_data['data'] as $flight) {
+//     //         $departure_iata = $flight['departure']['iata'] ?? 'NONE';
 
-    //         if (isset($flight['departure']['iata']) &&
-    //             strtoupper($flight['departure']['iata']) === strtoupper($airport)) {
-    //             $filtered[] = $flight;
-    //         }
-    //     }
+//     //         if (isset($flight['departure']['iata']) &&
+//     //             strtoupper($flight['departure']['iata']) === strtoupper($airport)) {
+//     //             $filtered[] = $flight;
+//     //         }
+//     //     }
 
-    //     $all_data['data'] = $filtered;
-    // }
+//     //     $all_data['data'] = $filtered;
+//     // }
 
-    return $all_data;
-}
+//     return $all_data;
+// }
