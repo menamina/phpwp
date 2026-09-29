@@ -29,6 +29,132 @@ function create_block_react_plugin_block_init() {
 }
 add_action( 'init', 'create_block_react_plugin_block_init' );
 
+// Register and enqueue the React view script for shortcode usage
+function react_plugin_register_wait_times_script() {
+    $asset_file = plugin_dir_path( __FILE__ ) . 'build/react-plugin/view.asset.php';
+
+    if ( file_exists( $asset_file ) ) {
+        $asset = include $asset_file;
+
+        wp_register_script(
+            'react-plugin-wait-times',
+            plugins_url( 'build/react-plugin/view.js', __FILE__ ),
+            $asset['dependencies'],
+            $asset['version'],
+            true
+        );
+
+        // Register the CSS that includes Leaflet styles
+        wp_register_style(
+            'react-plugin-wait-times',
+            plugins_url( 'build/react-plugin/view.css', __FILE__ ),
+            [],
+            $asset['version']
+        );
+    }
+}
+add_action( 'wp_enqueue_scripts', 'react_plugin_register_wait_times_script' );
+
+function react_plugin_wait_times_shortcode( $atts ) {
+    $atts = shortcode_atts( [ 'airport' => 'ORD' ], $atts );
+    wp_enqueue_script( 'react-plugin-wait-times' );
+    wp_enqueue_style( 'react-plugin-wait-times' );
+
+    return '<div class="flight-wait-times" data-airport="'
+        . esc_attr( $atts['airport'] ) . '"></div>';
+}
+add_shortcode( 'wait_times', 'react_plugin_wait_times_shortcode' );
+
+add_action('rest_api_init', function() {
+    register_rest_route('wait', '/times', [
+        'methods' => 'GET',
+        'callback' => 'react_plugin_wait_times_api',
+        'permission_callback' => '__return_true',
+    ]);
+});
+
+function react_plugin_wait_times_api($request) {
+    $airport = $request->get_param('airport') ?: 'ORD';
+
+    $checkpoints = [
+        [
+            'checkpoint' => 'Security Checkpoint A',
+            'terminal' => 'Terminal 1',
+            'airport' => 'ORD',
+            'wait_time' => rand(5, 25),
+            'status' => 'Normal',
+            'last_updated' => current_time('mysql'),
+            'lat' => 41.9786,
+            'lng' => -87.9047
+        ],
+        [
+            'checkpoint' => 'Security Checkpoint B',
+            'terminal' => 'Terminal 1',
+            'airport' => 'LAX',
+            'wait_time' => rand(10, 30),
+            'status' => 'Busy',
+            'last_updated' => current_time('mysql'),
+            'lat' => 33.9416,
+            'lng' => -118.4085
+        ],
+        [
+            'checkpoint' => 'Security Checkpoint C',
+            'terminal' => 'Terminal 2',
+            'airport' => '123',
+            'wait_time' => rand(5, 20),
+            'status' => 'Normal',
+            'last_updated' => current_time('mysql'),
+            'lat' => 41.9796,
+            'lng' => -87.9057
+        ],
+        [
+            'checkpoint' => 'Customs',
+            'terminal' => 'International',
+            'airport' => 'ORD',
+            'wait_time' => rand(15, 45),
+            'status' => 'Very Busy',
+            'last_updated' => current_time('mysql'),
+            'lat' => 41.9776,
+            'lng' => -87.9037
+        ],
+        [
+            'checkpoint' => 'Immigration',
+            'terminal' => 'International',
+            'airport' => '123',
+            'wait_time' => rand(20, 50),
+            'status' => 'Very Busy',
+            'last_updated' => current_time('mysql'),
+            'lat' => 41.9806,
+            'lng' => -87.9067
+        ],
+        [
+            'checkpoint' => 'Baggage Claim 1',
+            'terminal' => 'Terminal 1',
+            'airport' => 'ORD',
+            'wait_time' => rand(5, 15),
+            'status' => 'Fast',
+            'last_updated' => current_time('mysql'),
+            'lat' => 41.9766,
+            'lng' => -87.9027
+        ]
+    ];
+
+    $reqCheckPoints = [];
+
+    foreach ($checkpoints as $point) {
+        if ($point['airport'] === $airport) {
+            $reqCheckPoints[] = $point;
+        }
+    }
+
+    return [
+        'success' => true,
+        'data' => $reqCheckPoints,
+        'airport' => $airport,
+        'timestamp' => current_time('mysql')
+    ];
+}
+
 // function get_cached_flights($airport, $limit = 100){
 //     $cacheKey = "flightData_{$airport}_{$limit}";
 

@@ -51,7 +51,10 @@ echo '</pre>';
 
 ?>
 
-<div <?php echo get_block_wrapper_attributes(); ?>>
+<div <?php echo get_block_wrapper_attributes([
+  'data-airport' => $airport,
+  'data-limit'   => $limit,
+]); ?>>
     <h3>Flights from <?php echo esc_html($airport); ?></h3>
     
     <?php if (empty($flights['data'])): ?>
