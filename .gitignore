@@ -14,3 +14,7 @@ node_modules/
 # Build files
 build/
 dist/
+
+# Logs
+logs/
+*.log
