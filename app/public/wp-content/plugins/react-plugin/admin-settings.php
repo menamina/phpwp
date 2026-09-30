@@ -1,6 +1,13 @@
 <?php
 /**
  * Admin Settings Page for Wait Times Plugin
+ * 
+ * Handles:
+ * - Settings registration (API key, default airport) with REST API exposure
+ * - Admin menu page creation (Settings → Wait Times)
+ * - Settings page UI (renders div for React to mount)
+ * 
+ * Part of react-plugin
  */
 
 // Register settings with show_in_rest so they appear at /wp/v2/settings
