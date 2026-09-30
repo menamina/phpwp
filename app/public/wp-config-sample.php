@@ -89,7 +89,7 @@ define( 'WP_DEBUG', false );
 
 /* Add any custom values between this line and the "stop editing" line. */
 
-
+define('aviationKey', "7db0d516b096fa10389900afc2e4e375")
 
 /* That's all, stop editing! Happy publishing. */
 

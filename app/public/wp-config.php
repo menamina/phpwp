@@ -88,10 +88,16 @@ $table_prefix = 'wp_';
  * @link https://wordpress.org/support/article/debugging-in-wordpress/
  */
 if ( ! defined( 'WP_DEBUG' ) ) {
-	define( 'WP_DEBUG', false );
+	define( 'WP_DEBUG', true );
+	define( 'WP_DEBUG_LOG', true );
+	define( 'WP_DEBUG_DISPLAY', false );
 }
 
 define( 'WP_ENVIRONMENT_TYPE', 'local' );
+
+/* Custom API Keys */
+define( 'AVIATIONSTACK_API_KEY', '7db0d516b096fa10389900afc2e4e375' );
+
 /* That's all, stop editing! Happy publishing. */
 
 /** Absolute path to the WordPress directory. */
