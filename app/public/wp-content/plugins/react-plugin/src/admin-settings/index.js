@@ -21,9 +21,6 @@ function SettingsPage() {
 
 	useEffect(() => {
 		if (data) {
-			console.log("Fetched settings:", data);
-			console.log("Airport:", data.wait_times_default_airport);
-			console.log("API Key:", data.wait_times_api_key);
 			setAirport(data.wait_times_default_airport || "");
 			setApiKey(data.wait_times_api_key || "");
 		}
