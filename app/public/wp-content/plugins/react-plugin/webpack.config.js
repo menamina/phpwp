@@ -5,6 +5,11 @@ module.exports = {
 	...defaultConfig,
 	entry: {
 		...defaultConfig.entry(),
-		'admin-settings/index': path.resolve( process.cwd(), 'src', 'admin-settings', 'index.js' ),
+		'admin-settings/index': path.resolve(
+			process.cwd(),
+			'src',
+			'admin-settings',
+			'index.tsx'
+		),
 	},
 };

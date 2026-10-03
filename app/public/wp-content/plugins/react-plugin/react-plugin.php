@@ -48,6 +48,16 @@ function react_plugin_register_wait_times_script() {
             true
         );
 
+        // Pass settings to JavaScript
+        wp_localize_script(
+            'react-plugin-wait-times',
+            'afhSettings',
+            [
+                'refreshInterval' => get_option('afh_refresh_interval', 60) * 1000, // Convert to milliseconds
+                'defaultAirport' => get_option('afh_default_airport', 'ORD')
+            ]
+        );
+
         // Register the CSS that includes Leaflet styles
         wp_register_style(
             'react-plugin-wait-times',
@@ -159,44 +169,54 @@ function react_plugin_wait_times_api($request) {
     ];
 }
 
-// function get_cached_flights($airport, $limit = 100){
-//     $cacheKey = "flightData_{$airport}_{$limit}";
+function get_cached_flights($airport, $limit = 100){
+    $cacheKey = "flightData_{$airport}_{$limit}";
 
-//     $cache = get_transient($cacheKey);
-//     if ($cache){
-//         return $cache;
-//     }
-  
-//     $data = getFlightAPIData($airport, $limit);
+    $cache = get_transient($cacheKey);
+    if ($cache){
+        return $cache;
+    }
 
-//     set_transient($cacheKey, $data, 180);
+    $data = getFlightAPIData($airport, $limit);
 
-//     return $data;
-// }
+    set_transient($cacheKey, $data, 180);
 
-// function getFlightAPIData($airport, $limit){
-//     $api_key = '7db0d516b096fa10389900afc2e4e375';
+    return $data;
+}
 
-//     $url = "https://api.aviationstack.com/v1/flights?access_key={$api_key}&limit={$limit}";
+function getFlightAPIData($airport, $limit){
+    $api_key = get_option('afh_api_key', '');
 
-//     $response = wp_remote_get($url);
-//     $all_data = json_decode(wp_remote_retrieve_body($response), true);
+    if (empty($api_key)) {
+        return [
+            'error' => 'API key not configured. Please add your API key in Settings → Airport Info Hub.',
+            'data' => []
+        ];
+    }
 
+    $url = "https://api.aviationstack.com/v1/flights?access_key={$api_key}&limit={$limit}";
 
-//     // if (!empty($airport) && isset($all_data['data'])) {
+    $response = wp_remote_get($url);
 
-//     //     $filtered = [];
-//     //     foreach ($all_data['data'] as $flight) {
-//     //         $departure_iata = $flight['departure']['iata'] ?? 'NONE';
+    if (is_wp_error($response)) {
+        return [
+            'error' => 'Failed to fetch flight data: ' . $response->get_error_message(),
+            'data' => []
+        ];
+    }
 
-//     //         if (isset($flight['departure']['iata']) &&
-//     //             strtoupper($flight['departure']['iata']) === strtoupper($airport)) {
-//     //             $filtered[] = $flight;
-//     //         }
-//     //     }
+    $all_data = json_decode(wp_remote_retrieve_body($response), true);
 
-//     //     $all_data['data'] = $filtered;
-//     // }
+    if (!empty($airport) && isset($all_data['data'])) {
+        $filtered = [];
+        foreach ($all_data['data'] as $flight) {
+            if (isset($flight['departure']['iata']) &&
+                strtoupper($flight['departure']['iata']) === strtoupper($airport)) {
+                $filtered[] = $flight;
+            }
+        }
+        $all_data['data'] = $filtered;
+    }
 
-//     return $all_data;
-// }
+    return $all_data;
+}

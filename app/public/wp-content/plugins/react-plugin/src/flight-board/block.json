@@ -1,0 +1,29 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "create-block/flight-board",
+	"version": "0.1.0",
+	"title": "Flight Board",
+	"category": "widgets",
+	"icon": "airplane",
+	"description": "Display live flight departure and arrival information",
+	"example": {},
+	"attributes": {
+		"airport": {
+			"type": "string",
+			"default": "ORD"
+		},
+		"limit": {
+			"type": "number",
+			"default": 100
+		}
+	},
+	"supports": {
+		"html": false
+	},
+	"textdomain": "react-plugin",
+	"editorScript": "file:./index.js",
+	"editorStyle": "file:./index.css",
+	"style": "file:./style-index.css",
+	"render": "file:./render.php"
+}
