@@ -10,8 +10,8 @@
  * @see https://github.com/WordPress/gutenberg/blob/trunk/docs/reference-guides/block-api/block-metadata.md#render
  */
 
-// Get airport attribute (defaults to ORD)
-$airport = $attributes['airport'] ?? 'ORD';
+// Get airport attribute (defaults to site-wide setting, then ORD)
+$airport = $attributes['airport'] ?? get_option('afh_default_airport', 'ORD');
 
 // Output the placeholder div that view.js will mount the React map to
 ?>
