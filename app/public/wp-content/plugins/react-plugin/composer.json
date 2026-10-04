@@ -1,0 +1,8 @@
+{
+    "require-dev": {
+        "codeception/codeception": "^5.3",
+        "codeception/module-phpbrowser": "*",
+        "codeception/module-asserts": "*",
+        "lucatume/wp-browser": "^4.0"
+    }
+}
