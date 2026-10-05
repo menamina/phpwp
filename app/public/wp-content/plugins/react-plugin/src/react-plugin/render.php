@@ -11,7 +11,13 @@
  */
 
 // Get airport attribute (defaults to site-wide setting, then ORD)
-$airport = $attributes['airport'] ?? get_option('afh_default_airport', 'ORD');
+$airport = sanitize_text_field( $attributes['airport'] ?? get_option('afh_default_airport', 'ORD') );
+$airport = strtoupper( $airport );
+
+// Validate airport code format
+if ( ! preg_match('/^[A-Z]{3,4}$/', $airport) ) {
+    $airport = get_option('afh_default_airport', 'ORD');
+}
 
 // Output the placeholder div that view.js will mount the React map to
 ?>

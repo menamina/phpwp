@@ -6,9 +6,18 @@ use lucatume\WPBrowser\TestCase\WPTestCase;
 class AdminSettingsTest extends WPTestCase
 {
   public function test_settings_registered(): void {
-    $this->assertTrue(has_action('init', 'afh_register_settings'));
-    
-    $response = rest_do_request('/wp/v2/settings');
+    // has_action returns priority (10), not true
+    $this->assertNotFalse(has_action('init', 'afh_register_settings'));
+
+    // Login as admin to access /wp/v2/settings
+    $admin = $this->factory()->user->create(['role' => 'administrator']);
+    wp_set_current_user($admin);
+
+    $request = new \WP_REST_Request('GET', '/wp/v2/settings');
+    $response = rest_do_request($request);
+
+    $this->assertEquals(200, $response->get_status());
+
     $data = $response->get_data();
     $this->assertArrayHasKey('afh_api_key', $data);
 }
@@ -16,9 +25,24 @@ class AdminSettingsTest extends WPTestCase
 public function test_admin_menu_added(): void {
     global $submenu;
 
+    // Create admin user - add_options_page requires manage_options capability
+    $admin = $this->factory()->user->create(['role' => 'administrator']);
+    wp_set_current_user($admin);
+
     afh_add_settings_page();
-    $this->assertNotEmpty($submenu['options-general.php']);
-    $this->assertNotEmpty(menu_page_url('afh-settings', false));
+
+    // Check specifically for our page slug
+    $found = false;
+    if (isset($submenu['options-general.php'])) {
+        foreach ($submenu['options-general.php'] as $item) {
+            if ($item[2] === 'afh-settings') {
+                $found = true;
+                break;
+            }
+        }
+    }
+
+    $this->assertTrue($found, 'Settings page "afh-settings" not found in submenu');
 }
 
 public function test_settings_page_html_for_admin(): void {

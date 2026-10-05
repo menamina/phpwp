@@ -4,8 +4,8 @@
  * Fetches flight data from cached API and outputs HTML table
  */
 
-$airport = $attributes['airport'] ?? get_option('afh_default_airport', 'ORD');
-$limit = $attributes['limit'] ?? 100;
+$airport = sanitize_text_field( $attributes['airport'] ?? get_option('afh_default_airport', 'ORD') );
+$limit = absint( $attributes['limit'] ?? 100 );
 
 // Fetch cached flight data
 $flight_data = get_cached_flights($airport, $limit);

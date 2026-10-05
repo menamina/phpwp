@@ -71,12 +71,17 @@ add_action( 'wp_enqueue_scripts', 'react_plugin_register_wait_times_script' );
 
 function react_plugin_wait_times_shortcode( $atts ) {
     $atts = shortcode_atts( [ 'airport' => 'ORD' ], $atts );
+
+    $airport = sanitize_text_field( $atts['airport'] );
+    $airport = strtoupper( $airport );
+
     wp_enqueue_script( 'react-plugin-wait-times' );
     wp_enqueue_style( 'react-plugin-wait-times' );
 
     return '<div class="flight-wait-times" data-airport="'
-        . esc_attr( $atts['airport'] ) . '"></div>';
+        . esc_attr( $airport ) . '"></div>';
 }
+
 add_shortcode( 'wait_times', 'react_plugin_wait_times_shortcode' );
 
 add_action('rest_api_init', function() {
@@ -84,8 +89,29 @@ add_action('rest_api_init', function() {
         'methods' => 'GET',
         'callback' => 'react_plugin_wait_times_api',
         'permission_callback' => '__return_true',
+        'args' => [
+            'airport' => [
+                'required' => false,
+                'default' => 'ORD',
+                'sanitize_callback' => function($value) {
+                    return strtoupper( sanitize_text_field( $value ) );
+                },
+                'validate_callback' => function($value) {
+                    return preg_match('/^[A-Z]{3,4}$/i', $value);
+                }
+            ]
+        ]
     ]);
 });
+
+
+
+
+
+
+
+
+
 
 function react_plugin_wait_times_api($request) {
     $airport = $request->get_param('airport') ?: 'ORD';
@@ -170,6 +196,15 @@ function react_plugin_wait_times_api($request) {
 }
 
 function get_cached_flights($airport, $limit = 100){
+
+    $airport = sanitize_text_field( $airport );
+    $airport = strtoupper( $airport );
+
+    $limit = absint( $limit );
+    if ( $limit < 1 || $limit > 100 ) {
+        $limit = 100;
+    }
+
     $cacheKey = "flightData_{$airport}_{$limit}";
 
     $cache = get_transient($cacheKey);
