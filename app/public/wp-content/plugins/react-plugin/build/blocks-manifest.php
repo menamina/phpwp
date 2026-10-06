@@ -32,25 +32,22 @@ return array(
 		'style' => 'file:./style-index.css',
 		'render' => 'file:./render.php'
 	),
-	'react-plugin' => array(
+	'wait-times' => array(
 		'$schema' => 'https://schemas.wp.org/trunk/block.json',
 		'apiVersion' => 3,
-		'name' => 'create-block/react-plugin',
+		'name' => 'create-block/wait-times',
 		'version' => '0.1.0',
-		'title' => 'React Plugin',
+		'title' => 'Wait Times',
 		'category' => 'widgets',
 		'icon' => 'smiley',
-		'description' => 'Example block scaffolded with Create Block tool.',
+		'description' => 'Wait Times.',
 		'example' => array(
 			
 		),
 		'attributes' => array(
 			'airport' => array(
-				'type' => 'string'
-			),
-			'limit' => array(
-				'type' => 'number',
-				'default' => 100
+				'type' => 'string',
+				'default' => 'ORD'
 			)
 		),
 		'supports' => array(
@@ -61,6 +58,7 @@ return array(
 		'editorStyle' => 'file:./index.css',
 		'style' => 'file:./style-index.css',
 		'render' => 'file:./render.php',
-		'viewScript' => 'file:./view.js'
+		'viewScript' => 'file:./view.js',
+		'viewStyle' => 'file:./view.css'
 	)
 );

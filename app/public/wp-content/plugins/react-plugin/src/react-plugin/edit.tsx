@@ -1,55 +1,45 @@
-import { __ } from '@wordpress/i18n';
-import { useBlockProps, InspectorControls } from '@wordpress/block-editor';
-import { TextControl, PanelBody, RangeControl } from '@wordpress/components';
-import ServerSideRender from '@wordpress/server-side-render';
-import './editor.scss';
+import { __ } from "@wordpress/i18n";
+import { useBlockProps, InspectorControls } from "@wordpress/block-editor";
+import { TextControl, PanelBody } from "@wordpress/components";
+import { Placeholder } from "@wordpress/components";
+import "./editor.scss";
 
 interface WaitTimeMapAttributes {
 	airport: string;
-	limit: number;
 }
 
 interface EditProps {
 	attributes: WaitTimeMapAttributes;
-	setAttributes: ( attrs: Partial< WaitTimeMapAttributes > ) => void;
+	setAttributes: (attrs: WaitTimeMapAttributes) => void;
 }
 
-export default function Edit( { attributes, setAttributes }: EditProps ) {
-	const { airport, limit } = attributes;
+export default function Edit({ attributes, setAttributes }: EditProps) {
+	const { airport } = attributes;
 
 	return (
 		<>
 			<InspectorControls>
-				<PanelBody title={ __( 'Airport Settings', 'react-plugin' ) }>
+				<PanelBody title={__("Wait Times Settings", "react-plugin")}>
 					<TextControl
 						label="Airport Code"
-						value={ airport || '' }
-						onChange={ ( value ) =>
-							setAttributes( {
-								airport: value.toUpperCase().slice( 0, 3 ),
-							} )
+						value={airport || ""}
+						onChange={(value) =>
+							setAttributes({
+								airport: value.toUpperCase().slice(0, 3),
+							})
 						}
-						maxLength={ 3 }
+						maxLength={3}
 						help="3-letter IATA code (e.g., LAX, JFK, ORD)"
-						placeholder="LAX"
-					/>
-					<RangeControl
-						label="Max flights to fetch from API"
-						min={ 1 }
-						max={ 100 }
-						value={ limit }
-						onChange={ ( value ) =>
-							setAttributes( { limit: value } )
-						}
-						help="Increase this to fetch more flights from the API (may find more airports)"
+						placeholder="ORD"
 					/>
 				</PanelBody>
 			</InspectorControls>
 
-			<div { ...useBlockProps() }>
-				<ServerSideRender
-					block="create-block/react-plugin"
-					attributes={ attributes }
+			<div {...useBlockProps()}>
+				<Placeholder
+					icon="location-alt"
+					label="Flight Wait Times Map"
+					instructions={`Showing wait times for ${airport || 'ORD'}. Map preview available on frontend only.`}
 				/>
 			</div>
 		</>

@@ -21,8 +21,5 @@ if ( ! preg_match('/^[A-Z]{3,4}$/', $airport) ) {
 
 // Output the placeholder div that view.js will mount the React map to
 ?>
-<div <?php echo get_block_wrapper_attributes([
-  'class' => 'flight-wait-times',
-  'data-airport' => esc_attr($airport),
-]); ?>></div>
+<div class="flight-wait-times" data-airport="<?php echo esc_attr($airport); ?>"></div>
 
