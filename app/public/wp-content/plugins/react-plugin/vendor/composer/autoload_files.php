@@ -24,4 +24,5 @@ return array(
     'a57d1c9a1f9c33081f1c52e67daa67d5' => $vendorDir . '/lucatume/wp-browser/src/version-4-aliases.php',
     '6d9bcbcfc3471fe954843f7612a82033' => $vendorDir . '/lucatume/wp-browser/src/deprecated-functions.php',
     '69610b630baef85b456acbc18b25866c' => $vendorDir . '/lucatume/wp-browser/src/functions.php',
+    'c5d882a6a9818ff4af10ad44545d2160' => $vendorDir . '/playwright-php/playwright/src/Testing/functions.php',
 );

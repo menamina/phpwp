@@ -5,6 +5,18 @@ use lucatume\WPBrowser\TestCase\WPTestCase;
 
 class FlightApiTest extends WPTestCase
 {
+    protected function tearDown(): void
+    {
+        delete_option('afh_api_key');
+        delete_option('afh_default_airport');
+        
+        global $wpdb;
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_flightData_%'");
+        $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_flightData_%'");
+
+        parent::tearDown();
+    }
+
     public function test_cachedFlights_with_custom_params(): void {
         update_option('afh_api_key', 'test_key_123');
 

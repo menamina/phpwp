@@ -1,0 +1,348 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the community-maintained Playwright PHP project.
+ * It is not affiliated with or endorsed by Microsoft.
+ *
+ * (c) 2025-Present - Playwright PHP - https://github.com/playwright-php
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Playwright\Locator;
+
+use Playwright\Frame\FrameLocatorInterface;
+use Playwright\JSHandle\JSHandleInterface;
+use Playwright\Locator\Options\AriaSnapshotOptions;
+use Playwright\Locator\Options\BoundingBoxOptions;
+use Playwright\Locator\Options\CheckOptions;
+use Playwright\Locator\Options\ClearOptions;
+use Playwright\Locator\Options\ClickOptions;
+use Playwright\Locator\Options\DblClickOptions;
+use Playwright\Locator\Options\DispatchEventOptions;
+use Playwright\Locator\Options\DragToOptions;
+use Playwright\Locator\Options\DropOptions;
+use Playwright\Locator\Options\DropPayload;
+use Playwright\Locator\Options\FillOptions;
+use Playwright\Locator\Options\FilterOptions;
+use Playwright\Locator\Options\GetAttributeOptions;
+use Playwright\Locator\Options\GetByOptions;
+use Playwright\Locator\Options\GetByRoleOptions;
+use Playwright\Locator\Options\HoverOptions;
+use Playwright\Locator\Options\LocatorScreenshotOptions;
+use Playwright\Locator\Options\PressOptions;
+use Playwright\Locator\Options\ScrollIntoViewIfNeededOptions;
+use Playwright\Locator\Options\SelectOptionOptions;
+use Playwright\Locator\Options\SelectTextOptions;
+use Playwright\Locator\Options\SetCheckedOptions;
+use Playwright\Locator\Options\SetInputFilesOptions;
+use Playwright\Locator\Options\TapOptions;
+use Playwright\Locator\Options\TextContentOptions;
+use Playwright\Locator\Options\TypeOptions;
+use Playwright\Locator\Options\UncheckOptions;
+use Playwright\Locator\Options\WaitForFunctionOptions;
+use Playwright\Locator\Options\WaitForOptions;
+use Playwright\Page\PageInterface;
+
+interface LocatorInterface
+{
+    /**
+     * @param array<string, mixed>|ClickOptions $options
+     */
+    public function click(array|ClickOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|FillOptions $options
+     */
+    public function fill(string $value, array|FillOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|TypeOptions $options
+     */
+    public function type(string $value, array|TypeOptions $options = []): void;
+
+    /**
+     * Press keys sequentially to type the provided text.
+     *
+     * @param array<string, mixed>|TypeOptions $options
+     */
+    public function pressSequentially(string $text, array|TypeOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|PressOptions $options
+     */
+    public function press(string $key, array|PressOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|CheckOptions $options
+     */
+    public function check(array|CheckOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|UncheckOptions $options
+     */
+    public function uncheck(array|UncheckOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|HoverOptions $options
+     */
+    public function hover(array|HoverOptions $options = []): void;
+
+    /**
+     * Drag this element to target element.
+     *
+     * @param array<string, mixed>|DragToOptions $options
+     */
+    public function dragTo(LocatorInterface $target, array|DragToOptions $options = []): void;
+
+    /**
+     * Drop files or clipboard-like data onto this element, as an external application would.
+     *
+     * The target must accept the drop by calling preventDefault() in its dragover
+     * handler, otherwise the drop is rejected and this method throws.
+     *
+     * @param array<string, mixed>|DropPayload $payload
+     * @param array<string, mixed>|DropOptions $options
+     */
+    public function drop(array|DropPayload $payload, array|DropOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|DblClickOptions $options
+     */
+    public function dblclick(array|DblClickOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|ClearOptions $options
+     */
+    public function clear(array|ClearOptions $options = []): void;
+
+    public function focus(): void;
+
+    public function blur(): void;
+
+    /**
+     * @param array<string, mixed>|AriaSnapshotOptions $options
+     */
+    public function ariaSnapshot(array|AriaSnapshotOptions $options = []): string;
+
+    /**
+     * @param array<string, mixed>|BoundingBoxOptions $options
+     *
+     * @return array{x: float|int, y: float|int, width: float|int, height: float|int}|null
+     */
+    public function boundingBox(array|BoundingBoxOptions $options = []): ?array;
+
+    /**
+     * @param array<string, mixed>|DispatchEventOptions $options
+     */
+    public function dispatchEvent(string $type, mixed $eventInit = [], array|DispatchEventOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|ScrollIntoViewIfNeededOptions $options
+     */
+    public function scrollIntoViewIfNeeded(array|ScrollIntoViewIfNeededOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|LocatorScreenshotOptions $options
+     */
+    public function screenshot(?string $path = null, array|LocatorScreenshotOptions $options = []): ?string;
+
+    /**
+     * @return array<string>
+     */
+    public function allInnerTexts(): array;
+
+    /**
+     * @return array<string>
+     */
+    public function allTextContents(): array;
+
+    public function innerHTML(): string;
+
+    public function innerText(): string;
+
+    public function inputValue(): string;
+
+    public function isAttached(): bool;
+
+    public function isChecked(): bool;
+
+    public function isDisabled(): bool;
+
+    public function isEditable(): bool;
+
+    public function isEmpty(): bool;
+
+    public function isEnabled(): bool;
+
+    public function isHidden(): bool;
+
+    public function isVisible(): bool;
+
+    public function locator(string $selector): self;
+
+    /**
+     * @param array<string, mixed>|GetByOptions $options
+     */
+    public function getByAltText(string $text, array|GetByOptions $options = []): self;
+
+    /**
+     * @param array<string, mixed>|GetByOptions $options
+     */
+    public function getByLabel(string $text, array|GetByOptions $options = []): self;
+
+    /**
+     * @param array<string, mixed>|GetByOptions $options
+     */
+    public function getByPlaceholder(string $text, array|GetByOptions $options = []): self;
+
+    /**
+     * @param array<string, mixed>|GetByRoleOptions $options
+     */
+    public function getByRole(string $role, array|GetByRoleOptions $options = []): self;
+
+    public function getByTestId(string $testId): self;
+
+    /**
+     * @param array<string, mixed>|GetByOptions $options
+     */
+    public function getByText(string $text, array|GetByOptions $options = []): self;
+
+    /**
+     * @param array<string, mixed>|GetByOptions $options
+     */
+    public function getByTitle(string $text, array|GetByOptions $options = []): self;
+
+    /**
+     * @param array<string, mixed>|WaitForOptions $options
+     */
+    public function waitFor(array|WaitForOptions $options = []): void;
+
+    /**
+     * @param string|array<string>                     $values
+     * @param array<string, mixed>|SelectOptionOptions $options
+     *
+     * @return array<string>
+     */
+    public function selectOption(string|array $values, array|SelectOptionOptions $options = []): array;
+
+    /**
+     * @param string|array<string>                      $files
+     * @param array<string, mixed>|SetInputFilesOptions $options
+     */
+    public function setInputFiles(string|array $files, array|SetInputFilesOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|TextContentOptions $options
+     */
+    public function textContent(array|TextContentOptions $options = []): ?string;
+
+    /**
+     * @param array<string, mixed>|GetAttributeOptions $options
+     */
+    public function getAttribute(string $name, array|GetAttributeOptions $options = []): ?string;
+
+    public function count(): int;
+
+    /**
+     * @return array<LocatorInterface>
+     */
+    public function all(): array;
+
+    public function first(): self;
+
+    public function last(): self;
+
+    public function nth(int $index): self;
+
+    public function evaluate(string $expression, mixed $arg = null): mixed;
+
+    /**
+     * Returns a handle to the result instead of a serialized copy, so a DOM node
+     * or a live object survives the round trip.
+     *
+     * Strict: the selector has to resolve to exactly one element. Dispose the
+     * handle once done with it, otherwise it pins its target until the page closes.
+     */
+    public function evaluateHandle(string $expression, mixed $arg = null): JSHandleInterface;
+
+    /**
+     * Re-runs the expression, with the matched element as its first argument,
+     * until it returns a truthy value.
+     *
+     * @param array<string, mixed>|WaitForFunctionOptions $options
+     */
+    public function waitForFunction(string $pageFunction, mixed $arg = null, array|WaitForFunctionOptions $options = []): self;
+
+    /**
+     * The page this locator resolves against.
+     *
+     * @throws \Playwright\Exception\RuntimeException if the locator was built
+     *                                                without a page, which only
+     *                                                happens when constructed by hand
+     */
+    public function page(): PageInterface;
+
+    /**
+     * Runs the expression once over every matching element, passing them as an array.
+     *
+     * Unlike evaluate(), which targets the first match, and it does not wait for
+     * elements to appear: an empty match evaluates against an empty array.
+     */
+    public function evaluateAll(string $expression, mixed $arg = null): mixed;
+
+    /**
+     * Paints a highlight over the matching elements until the next action.
+     *
+     * A debugging aid, visible in headed mode only; it changes nothing in the page.
+     */
+    public function highlight(): void;
+
+    /**
+     * Removes the highlight painted by highlight().
+     */
+    public function hideHighlight(): void;
+
+    /**
+     * @param array<string, mixed>|SelectTextOptions $options
+     */
+    public function selectText(array|SelectTextOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|SetCheckedOptions $options
+     */
+    public function setChecked(bool $checked, array|SetCheckedOptions $options = []): void;
+
+    /**
+     * @param array<string, mixed>|TapOptions $options
+     */
+    public function tap(array|TapOptions $options = []): void;
+
+    public function frameLocator(string $selector): FrameLocatorInterface;
+
+    public function getSelector(): string;
+
+    /**
+     * @param array<string, mixed>|FilterOptions $options
+     */
+    public function filter(array|FilterOptions $options = []): self;
+
+    public function and(LocatorInterface $locator): self;
+
+    public function or(LocatorInterface $locator): self;
+
+    public function describe(string $description): self;
+
+    /**
+     * Resolves the current match into a locator built from test ids and aria roles.
+     *
+     * Turns an implementation-detail selector into a user-facing one, so it needs a
+     * live match and hits the browser.
+     */
+    public function normalize(): self;
+
+    public function contentFrame(): FrameLocatorInterface;
+}

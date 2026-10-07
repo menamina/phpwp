@@ -25,6 +25,7 @@ class ComposerStaticInit3aa8807de7f4f7e79d809f17e0f890b4
         'a57d1c9a1f9c33081f1c52e67daa67d5' => __DIR__ . '/..' . '/lucatume/wp-browser/src/version-4-aliases.php',
         '6d9bcbcfc3471fe954843f7612a82033' => __DIR__ . '/..' . '/lucatume/wp-browser/src/deprecated-functions.php',
         '69610b630baef85b456acbc18b25866c' => __DIR__ . '/..' . '/lucatume/wp-browser/src/functions.php',
+        'c5d882a6a9818ff4af10ad44545d2160' => __DIR__ . '/..' . '/playwright-php/playwright/src/Testing/functions.php',
     );
 
     public static $prefixLengthsPsr4 = array (
@@ -56,10 +57,13 @@ class ComposerStaticInit3aa8807de7f4f7e79d809f17e0f890b4
         'P' => 
         array (
             'Psy\\' => 4,
+            'Psr\\Log\\' => 8,
             'Psr\\Http\\Message\\' => 17,
             'Psr\\Http\\Client\\' => 16,
             'Psr\\EventDispatcher\\' => 20,
             'Psr\\Container\\' => 14,
+            'Psr\\Clock\\' => 10,
+            'Playwright\\' => 11,
             'PhpParser\\' => 10,
             'PhpOption\\' => 10,
         ),
@@ -181,6 +185,10 @@ class ComposerStaticInit3aa8807de7f4f7e79d809f17e0f890b4
         array (
             0 => __DIR__ . '/..' . '/psy/psysh/src',
         ),
+        'Psr\\Log\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/psr/log/src',
+        ),
         'Psr\\Http\\Message\\' => 
         array (
             0 => __DIR__ . '/..' . '/psr/http-factory/src',
@@ -197,6 +205,14 @@ class ComposerStaticInit3aa8807de7f4f7e79d809f17e0f890b4
         'Psr\\Container\\' => 
         array (
             0 => __DIR__ . '/..' . '/psr/container/src',
+        ),
+        'Psr\\Clock\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/psr/clock/src',
+        ),
+        'Playwright\\' => 
+        array (
+            0 => __DIR__ . '/..' . '/playwright-php/playwright/src',
         ),
         'PhpParser\\' => 
         array (

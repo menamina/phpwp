@@ -29,7 +29,7 @@ class WaitTimesMapCest
             'post_type' => 'post'
         ]);
 
-        $I->amOnPage("/?p={$postId}");
+        $I->amOnPage("/{$postId}");
 
         // Wait for React to render the map
         $I->waitForElement('.custom-marker', 10);
@@ -51,7 +51,7 @@ class WaitTimesMapCest
             'post_status' => 'publish'
         ]);
 
-        $I->amOnPage("/?p={$postId}");
+        $I->amOnPage("/{$postId}");
 
         // Wait for markers to appear
         $I->waitForElement('.custom-marker', 10);
@@ -79,7 +79,7 @@ class WaitTimesMapCest
             'post_status' => 'publish'
         ]);
 
-        $I->amOnPage("/?p={$postId1}");
+        $I->amOnPage("/{$postId1}");
         $I->waitForElement('.custom-marker', 10);
         $I->seeElement('[data-airport="ORD"]');
 
@@ -89,7 +89,7 @@ class WaitTimesMapCest
             'post_status' => 'publish'
         ]);
 
-        $I->amOnPage("/?p={$postId2}");
+        $I->amOnPage("/{$postId2}");
         $I->waitForElement('.custom-marker', 10);
         $I->seeElement('[data-airport="LAX"]');
     }
@@ -104,7 +104,7 @@ class WaitTimesMapCest
             'post_status' => 'publish'
         ]);
 
-        $I->amOnPage("/?p={$postId}");
+        $I->amOnPage("/{$postId}");
 
         // Should show error message
         $I->waitForElement('.flight-wait-times', 5);
@@ -121,7 +121,7 @@ class WaitTimesMapCest
             'post_status' => 'publish'
         ]);
 
-        $I->amOnPage("/?p={$postId}");
+        $I->amOnPage("/{$postId}");
 
         // Verify shortcode renders map
         $I->waitForElement('.custom-marker', 10);

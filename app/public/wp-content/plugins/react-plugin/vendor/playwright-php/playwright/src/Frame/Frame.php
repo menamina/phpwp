@@ -1,0 +1,455 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the community-maintained Playwright PHP project.
+ * It is not affiliated with or endorsed by Microsoft.
+ *
+ * (c) 2025-Present - Playwright PHP - https://github.com/playwright-php
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Playwright\Frame;
+
+use Playwright\Exception\PlaywrightException;
+use Playwright\Exception\ProtocolErrorException;
+use Playwright\Exception\RuntimeException;
+use Playwright\JSHandle\JSHandle;
+use Playwright\JSHandle\JSHandleInterface;
+use Playwright\Locator\Locator;
+use Playwright\Locator\LocatorInterface;
+use Playwright\Locator\RoleSelectorBuilder;
+use Playwright\Network\Response;
+use Playwright\Network\ResponseInterface;
+use Playwright\Page\Options\DragAndDropOptions;
+use Playwright\Page\Options\GotoOptions;
+use Playwright\Page\Options\ScriptTagOptions;
+use Playwright\Page\Options\SetContentOptions;
+use Playwright\Page\Options\StyleTagOptions;
+use Playwright\Page\Options\WaitForFunctionOptions;
+use Playwright\Page\Options\WaitForNavigationOptions;
+use Playwright\Page\Options\WaitForUrlOptions;
+use Playwright\Page\PageInterface;
+use Playwright\Transport\TransportInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
+
+final class Frame implements \Stringable, FrameInterface
+{
+    private LoggerInterface $logger;
+
+    public function __construct(
+        private readonly TransportInterface $transport,
+        private readonly string $pageId,
+        private readonly string $frameSelector,
+        ?LoggerInterface $logger = null,
+        private readonly ?PageInterface $page = null,
+    ) {
+        $this->logger = $logger ?? new NullLogger();
+    }
+
+    public function __toString(): string
+    {
+        return 'Frame(selector="'.$this->frameSelector.'")';
+    }
+
+    public function locator(string $selector): LocatorInterface
+    {
+        $this->logger->debug('Creating locator in frame', [
+            'frameSelector' => $this->frameSelector,
+            'selector' => $selector,
+        ]);
+
+        return new Locator($this->transport, $this->pageId, $selector, $this->frameSelector, $this->logger, [], $this->page);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByAltText(string $text, array $options = []): LocatorInterface
+    {
+        return $this->locator(\sprintf('[alt="%s"]', $text));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByLabel(string $text, array $options = []): LocatorInterface
+    {
+        return $this->locator(\sprintf('label:text-is("%s") >> nth=0', $text));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByPlaceholder(string $text, array $options = []): LocatorInterface
+    {
+        return $this->locator(\sprintf('[placeholder="%s"]', $text));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByRole(string $role, array $options = []): LocatorInterface
+    {
+        $selector = RoleSelectorBuilder::buildSelector($role, $options);
+        $locatorOptions = RoleSelectorBuilder::filterLocatorOptions($options);
+
+        $this->logger->debug('Creating role locator in frame', [
+            'frameSelector' => $this->frameSelector,
+            'role' => $role,
+            'selector' => $selector,
+        ]);
+
+        return new Locator($this->transport, $this->pageId, $selector, $this->frameSelector, $this->logger, $locatorOptions, $this->page);
+    }
+
+    public function getByTestId(string $testId): LocatorInterface
+    {
+        return $this->locator(\sprintf('[data-testid="%s"]', $testId));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByText(string $text, array $options = []): LocatorInterface
+    {
+        return $this->locator(\sprintf('text="%s"', $text));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function getByTitle(string $text, array $options = []): LocatorInterface
+    {
+        return $this->locator(\sprintf('[title="%s"]', $text));
+    }
+
+    public function frameLocator(string $selector): FrameLocatorInterface
+    {
+        $newSelector = $this->frameSelector.' >> '.$selector;
+
+        $this->logger->debug('Creating nested frame locator from frame', [
+            'parentFrameSelector' => $this->frameSelector,
+            'childSelector' => $selector,
+            'newSelector' => $newSelector,
+        ]);
+
+        return new FrameLocator($this->transport, $this->pageId, $newSelector, $this->logger, $this->page);
+    }
+
+    public function owner(): LocatorInterface
+    {
+        $this->logger->debug('Creating owner locator for frame', [
+            'frameSelector' => $this->frameSelector,
+        ]);
+
+        return new Locator($this->transport, $this->pageId, $this->frameSelector, null, $this->logger, [], $this->page);
+    }
+
+    public function content(): string
+    {
+        $response = $this->sendCommand('frame.content');
+        $content = $response['content'] ?? null;
+        if (!is_string($content)) {
+            throw new ProtocolErrorException('Invalid frame.content response', 0);
+        }
+
+        return $content;
+    }
+
+    /**
+     * @param array<string, mixed>|GotoOptions $options
+     */
+    public function goto(string $url, array|GotoOptions $options = []): ?ResponseInterface
+    {
+        $response = $this->sendCommand('frame.goto', [
+            'url' => $url,
+            'options' => GotoOptions::from($options)->toArray(),
+        ]);
+
+        return $this->createResponse($response['response'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed>|SetContentOptions $options
+     */
+    public function setContent(string $html, array|SetContentOptions $options = []): self
+    {
+        $this->sendCommand('frame.setContent', [
+            'html' => $html,
+            'options' => SetContentOptions::from($options)->toArray(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * @param array<string, mixed>|WaitForFunctionOptions $options
+     */
+    public function waitForFunction(string $pageFunction, mixed $arg = null, array|WaitForFunctionOptions $options = []): self
+    {
+        $this->sendCommand('frame.waitForFunction', [
+            'pageFunction' => self::normalizeForPage($pageFunction),
+            'arg' => $arg,
+            'options' => WaitForFunctionOptions::from($options)->toArray(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * @param array<string, mixed>|WaitForUrlOptions $options
+     */
+    public function waitForURL(string $url, array|WaitForUrlOptions $options = []): self
+    {
+        $this->sendCommand('frame.waitForURL', [
+            'url' => $url,
+            'options' => WaitForUrlOptions::from($options)->toArray(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * @param array<string, mixed>|WaitForNavigationOptions $options
+     */
+    public function waitForNavigation(array|WaitForNavigationOptions $options = []): ?ResponseInterface
+    {
+        $response = $this->sendCommand('frame.waitForNavigation', [
+            'options' => WaitForNavigationOptions::from($options)->toArray(),
+        ]);
+
+        return $this->createResponse($response['response'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed>|DragAndDropOptions $options
+     */
+    public function dragAndDrop(string $source, string $target, array|DragAndDropOptions $options = []): self
+    {
+        $this->sendCommand('frame.dragAndDrop', [
+            'source' => $source,
+            'target' => $target,
+            'options' => DragAndDropOptions::from($options)->toArray(),
+        ]);
+
+        return $this;
+    }
+
+    public function addScriptTag(array|ScriptTagOptions $options = []): self
+    {
+        $this->sendCommand('frame.addScriptTag', ['options' => ScriptTagOptions::from($options)->toArray()]);
+
+        return $this;
+    }
+
+    public function addStyleTag(array|StyleTagOptions $options = []): self
+    {
+        $this->sendCommand('frame.addStyleTag', ['options' => StyleTagOptions::from($options)->toArray()]);
+
+        return $this;
+    }
+
+    public function evaluate(string $expression, mixed $arg = null): mixed
+    {
+        $response = $this->sendCommand('frame.evaluate', [
+            'expression' => self::normalizeForPage($expression),
+            'arg' => $arg,
+        ]);
+
+        return $response['result'] ?? null;
+    }
+
+    public function evaluateHandle(string $expression, mixed $arg = null): JSHandleInterface
+    {
+        $response = $this->sendCommand('frame.evaluateHandle', [
+            'expression' => self::normalizeForPage($expression),
+            'arg' => $arg,
+        ]);
+
+        return $this->createHandle($response, 'frame.evaluateHandle');
+    }
+
+    public function frameElement(): JSHandleInterface
+    {
+        $response = $this->sendCommand('frame.frameElement');
+
+        return $this->createHandle($response, 'frame.frameElement');
+    }
+
+    public function page(): PageInterface
+    {
+        if (null === $this->page) {
+            throw new RuntimeException('This frame was not created from a page.');
+        }
+
+        return $this->page;
+    }
+
+    public function name(): string
+    {
+        $response = $this->sendCommand('frame.name');
+        $value = $response['value'] ?? null;
+        if (!is_string($value)) {
+            throw new ProtocolErrorException('Invalid frame.name response', 0);
+        }
+
+        return $value;
+    }
+
+    public function title(): string
+    {
+        $response = $this->sendCommand('frame.title');
+        $value = $response['value'] ?? null;
+        if (!is_string($value)) {
+            throw new ProtocolErrorException('Invalid frame.title response', 0);
+        }
+
+        return $value;
+    }
+
+    public function url(): string
+    {
+        $response = $this->sendCommand('frame.url');
+        $value = $response['value'] ?? null;
+        if (!is_string($value)) {
+            throw new ProtocolErrorException('Invalid frame.url response', 0);
+        }
+
+        return $value;
+    }
+
+    public function isDetached(): bool
+    {
+        $response = $this->sendCommand('frame.isDetached');
+
+        return true === ($response['value'] ?? false);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function waitForLoadState(string $state = 'load', array $options = []): self
+    {
+        $this->sendCommand('frame.waitForLoadState', ['state' => $state, 'options' => $options]);
+
+        return $this;
+    }
+
+    public function parentFrame(): ?FrameInterface
+    {
+        $response = $this->sendCommand('frame.parent');
+        $selector = $response['selector'] ?? null;
+
+        return is_string($selector)
+            ? new Frame($this->transport, $this->pageId, $selector, $this->logger, $this->page)
+            : null;
+    }
+
+    /**
+     * @return array<FrameInterface>
+     */
+    public function childFrames(): array
+    {
+        $response = $this->sendCommand('frame.children');
+        $frames = $response['frames'] ?? [];
+        if (!is_array($frames)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($frames as $frameData) {
+            if (is_array($frameData) && isset($frameData['selector']) && is_string($frameData['selector'])) {
+                $result[] = new Frame($this->transport, $this->pageId, $frameData['selector'], $this->logger, $this->page);
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     *
+     * @return array<string, mixed>
+     */
+    private function sendCommand(string $action, array $params = []): array
+    {
+        $payload = array_merge($params, [
+            'action' => $action,
+            'pageId' => $this->pageId,
+            'frameSelector' => $this->frameSelector,
+        ]);
+
+        $response = $this->transport->send($payload);
+
+        if (isset($response['error'])) {
+            $error = $response['error'];
+            $errorMessage = is_string($error) ? $error : 'Unknown frame error';
+            throw new PlaywrightException($errorMessage);
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     */
+    private function createHandle(array $response, string $action): JSHandleInterface
+    {
+        $handleId = $response['handleId'] ?? null;
+        if (!is_string($handleId)) {
+            throw new ProtocolErrorException(\sprintf('Invalid %s response', $action), 0);
+        }
+
+        return new JSHandle($this->transport, $handleId);
+    }
+
+    private function createResponse(mixed $data): ?ResponseInterface
+    {
+        if (null === $data) {
+            return null;
+        }
+        if (!is_array($data)) {
+            throw new ProtocolErrorException('Invalid frame response data from transport', 0);
+        }
+
+        $response = [];
+        foreach ($data as $key => $value) {
+            if (!is_string($key)) {
+                throw new ProtocolErrorException('Invalid frame response data from transport: non-string key', 0);
+            }
+            $response[$key] = $value;
+        }
+
+        return new Response($this->transport, $this->pageId, $response);
+    }
+
+    private static function normalizeForPage(string $expression): string
+    {
+        $trimmed = ltrim($expression);
+
+        if (self::isFunctionLike($trimmed)) {
+            return $expression;
+        }
+
+        if (self::startsWithReturn($trimmed)) {
+            return '(arg) => { '.$trimmed.' }';
+        }
+
+        return $expression;
+    }
+
+    private static function isFunctionLike(string $expression): bool
+    {
+        return (bool) preg_match('/^((async\s+)?function\b|\([^)]*\)\s*=>|[A-Za-z_$][A-Za-z0-9_$]*\s*=>|async\s*\([^)]*\)\s*=>)/', $expression);
+    }
+
+    private static function startsWithReturn(string $expression): bool
+    {
+        return (bool) preg_match('/^return\b/', $expression);
+    }
+}

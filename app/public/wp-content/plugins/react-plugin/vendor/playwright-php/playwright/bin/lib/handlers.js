@@ -1,0 +1,1115 @@
+const { logger, ErrorHandler, CommandRegistry, BaseHandler, PromiseUtils, FrameUtils, RouteUtils } = require('./core');
+const { globalCoordinator } = require('./coordination');
+const { PopupCoordinator } = require('./popup-coordinator');
+
+// The two callbacks below never run in this Node process: Playwright ships
+// their source to the browser, so their eval() has page scope only, exactly
+// like the callbacks passed to page.evaluate() elsewhere in this file.
+//
+// They are needed because evaluateHandle() does not accept a function as a
+// string. Playwright evaluates a string pageFunction as a plain expression and
+// never calls it, so forwarding "() => value" would hand back a handle to the
+// function itself rather than to its result.
+const evaluateHandleInPage = async ({ expression, arg }) => {
+  const value = eval(`(${expression})`);
+  return typeof value === 'function' ? await value(arg) : await value;
+};
+
+const evaluateHandleOnTarget = async (target, { expression, arg }) => {
+  const value = eval(`(${expression})`);
+  return typeof value === 'function' ? await value(target, arg) : await value;
+};
+
+// A HAR url filter accepts a glob or a regex. A glob may legitimately start with
+// a slash, so PHP sends the regex form under its own key as a "/source/flags"
+// literal rather than leaving the two shapes to be told apart here.
+function harOptions(options) {
+  const { urlFilterRegex, ...rest } = options || {};
+  if (typeof urlFilterRegex !== 'string') return rest;
+  const lastSlash = urlFilterRegex.lastIndexOf('/');
+  return { ...rest, urlFilter: new RegExp(urlFilterRegex.slice(1, lastSlash), urlFilterRegex.slice(lastSlash + 1)) };
+}
+
+class APIRequestHandler extends BaseHandler {
+  async handle(command, method) {
+    const registry = CommandRegistry.create({
+      newContext: () => this.newContext(command),
+      fetch: () => this.fetch(command),
+      storageState: () => this.storageState(command),
+      dispose: () => this.dispose(command)
+    });
+
+    const result = await ErrorHandler.safeExecute(
+      () => this.executeWithRegistry(registry, method),
+      { method, contextId: command.contextId }
+    );
+
+    return this.wrapResult(result);
+  }
+
+  requestContext(contextId) {
+    const isolated = this.apiContexts.get(contextId);
+    if (isolated) return isolated;
+
+    const browserContext = this.contexts.get(contextId)?.context;
+    if (browserContext) return browserContext.request;
+
+    throw new Error(`APIRequestContext not found: ${contextId}`);
+  }
+
+  async newContext(command) {
+    const context = await this.apiRequest.newContext(command.options || {});
+    const contextId = this.generateId('api');
+    this.apiContexts.set(contextId, context);
+
+    return { contextId };
+  }
+
+  async fetch(command) {
+    const context = this.requestContext(command.contextId);
+    const response = await context.fetch(command.url, command.options || {});
+
+    try {
+      const body = await response.body();
+
+      return {
+        response: {
+          url: response.url(),
+          status: response.status(),
+          statusText: response.statusText(),
+          headers: response.headers(),
+          headersArray: response.headersArray(),
+          body: body.toString('base64'),
+          bodyEncoding: 'base64'
+        }
+      };
+    } finally {
+      await response.dispose();
+    }
+  }
+
+  async storageState(command) {
+    const options = command.path ? { path: command.path } : {};
+    return { storageState: await this.requestContext(command.contextId).storageState(options) };
+  }
+
+  async dispose(command) {
+    const context = this.requestContext(command.contextId);
+    await context.dispose();
+    this.apiContexts.delete(command.contextId);
+  }
+}
+
+class ContextHandler extends BaseHandler {
+  async handle(command, method) {
+    // Closing a context drops it from the registry, and closing its browser drops it
+    // too, so an id we no longer know about belongs to a context that is closed.
+    if (method === 'isClosed') {
+      const known = this.contexts.get(command.contextId)?.context;
+      return this.wrapResult({ value: known ? known.isClosed() : true });
+    }
+
+    const context = this.validateResource(this.contexts, command.contextId, 'Context')?.context;
+    if (!context._initScriptPromise) context._initScriptPromise = Promise.resolve();
+
+    const registry = CommandRegistry.create({
+      addInitScript: () => context.addInitScript(command.script),
+      setExtraHTTPHeaders: () => context.setExtraHTTPHeaders(command.headers),
+      setOffline: () => context.setOffline(!!command.offline),
+      setGeolocation: () => context.setGeolocation(command.geolocation),
+      addCookies: () => context.addCookies(command.cookies),
+      clearCookies: () => context.clearCookies(command.options || {}),
+      grantPermissions: () => context.grantPermissions(command.permissions, command.origin ? { origin: command.origin } : undefined),
+      clearPermissions: () => context.clearPermissions(),
+      startTracing: async () => { await context.tracing.start(command.options || {}); context.__phpTracingActive = true; },
+      stopTracing: async () => { context.__phpTracingActive = false; await context.tracing.stop({ path: command.path }); },
+      waitForEvent: async () => {
+        // Special-case 'page' event to return a serializable payload
+        if (command.event === 'page') {
+          const popup = await context.waitForEvent('page', { timeout: command.timeout });
+          const popupPageId = this.generateId('page');
+          this.pages.set(popupPageId, popup);
+          this.pageContexts.set(popupPageId, command.contextId);
+          if (this.setupPageEventListeners) {
+            this.setupPageEventListeners(popup, popupPageId);
+          }
+          return { popupPageId };
+        }
+        // For other events, return a basic value wrapper
+        const value = await context.waitForEvent(command.event, { timeout: command.timeout });
+        return { value: value ?? null };
+      },
+      waitForPopup: () => this.waitForPopup(context, command),
+      setNetworkThrottling: () => this.setThrottling(command),
+      setDefaultTimeout: () => context.setDefaultTimeout(command.timeout),
+      setDefaultNavigationTimeout: () => context.setDefaultNavigationTimeout(command.timeout),
+      route: () => RouteUtils.setupRoute(context, command.contextId, command.url, this.generateId, this.routes, this.extractRequestData, this.sendFramedResponse),
+      unroute: () => context.unroute(command.url),
+      unrouteAll: () => this.unrouteAll(context, command.contextId, command.options),
+      cookies: async () => ({ cookies: await context.cookies(command.urls) }),
+      storageState: async () => ({ storageState: await context.storageState(command.options) }),
+      setStorageState: () => context.setStorageState(command.storageState),
+      clipboardText: () => this.getClipboardText(context),
+      close: () => this.closeContext(context, command.contextId),
+      newPage: () => this.createNewPage(context, command)
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, contextId: command.contextId });
+    return this.wrapResult(result);
+  }
+
+  async handleTracing(command, method) {
+    // API requests share the browser context ID, but must target request.tracing.
+    const browserContext = this.contexts.get(command.contextId)?.context;
+    const context = browserContext
+      ? (command.apiRequest ? browserContext.request : browserContext)
+      : this.apiContexts.get(command.contextId);
+
+    if (!context) {
+      throw new Error(`Tracing context not found: ${command.contextId}`);
+    }
+
+    const registry = CommandRegistry.create({
+      start: async () => { await context.tracing.start(command.options || {}); context.__phpTracingActive = true; },
+      startChunk: () => context.tracing.startChunk(command.options || {}),
+      stop: async () => { context.__phpTracingActive = false; await context.tracing.stop(command.options || {}); },
+      stopChunk: () => context.tracing.stopChunk(command.options || {}),
+      // startHar resolves with a Disposable, which cannot cross the JSON bridge
+      startHar: async () => { await context.tracing.startHar(command.path, harOptions(command.options)); return {}; },
+      stopHar: async () => { await context.tracing.stopHar(); return {}; },
+      // Groups are silently skipped when tracing is off so callers (e.g. expect
+      // assertions) can emit them unconditionally
+      group: () => context.__phpTracingActive
+        ? context.tracing.group(command.name, command.location ? { location: { file: command.location } } : undefined)
+        : { skipped: true },
+      groupEnd: () => context.__phpTracingActive ? context.tracing.groupEnd() : { skipped: true }
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, contextId: command.contextId });
+    return this.wrapResult(result);
+  }
+
+  async handleCredentials(command, method) {
+    const context = this.validateResource(this.contexts, command.contextId, 'Context')?.context;
+
+    const registry = CommandRegistry.create({
+      create: async () => ({ credential: await context.credentials.create(command.rpId, command.options || {}) }),
+      delete: () => context.credentials.delete(command.credentialId),
+      get: async () => ({ credentials: await context.credentials.get(command.options || {}) }),
+      install: () => context.credentials.install()
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, contextId: command.contextId });
+    return this.wrapResult(result);
+  }
+
+  async handleClock(command, method) {
+    const context = this.validateResource(this.contexts, command.contextId, 'Context')?.context;
+
+    const registry = CommandRegistry.create({
+      install: async () => {
+        await context.clock.install(command.options);
+        return {};
+      },
+      fastForward: async () => {
+        await context.clock.fastForward(command.ticks);
+        return {};
+      },
+      pauseAt: async () => {
+        await context.clock.pauseAt(command.time);
+        return {};
+      },
+      resume: async () => {
+        await context.clock.resume();
+        return {};
+      },
+      runFor: async () => {
+        await context.clock.runFor(command.ticks);
+        return {};
+      },
+      setFixedTime: async () => {
+        await context.clock.setFixedTime(command.time);
+        return {};
+      },
+      setSystemTime: async () => {
+        await context.clock.setSystemTime(command.time);
+        return {};
+      }
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, contextId: command.contextId });
+    return this.wrapResult(result);
+  }
+
+  async unrouteAll(context, contextId, options) {
+    await context.unrouteAll(options || {});
+    RouteUtils.forgetRoutes(this.routes, contextId);
+  }
+
+  setThrottling(command) {
+    if (command.throttling && typeof command.throttling === 'object') {
+      this.contextThrottling.set(command.contextId, {
+        latency: Number(command.throttling.latency) || 0,
+        downloadThroughput: Number(command.throttling.downloadThroughput) || 0,
+        uploadThroughput: Number(command.throttling.uploadThroughput) || 0,
+      });
+    }
+  }
+
+  async getClipboardText(context) {
+    const pages = context.pages();
+    if (pages.length === 0) throw new Error('No pages available in context to read clipboard');
+    const value = await pages[0].evaluate(() => navigator.clipboard.readText());
+    return this.createValueResult(value);
+  }
+
+  async createNewPage(context, command) {
+    const page = await context.newPage();
+    const pageId = this.generateId('page');
+    this.pages.set(pageId, page);
+    this.pageContexts.set(pageId, command.contextId);
+
+    if (this.setupPageEventListeners) {
+      this.setupPageEventListeners(page, pageId);
+    }
+
+    return { pageId };
+  }
+
+  async closeContext(context, contextId) {
+    try {
+      await context.close();
+    } catch (error) {
+      logger.error('Failed to close context', { contextId, error: error?.message });
+      throw error;
+    } finally {
+      this.cleanupContextResources(contextId);
+    }
+  }
+
+  cleanupContextResources(contextId) {
+    this.contexts.delete(contextId);
+    this.contextThrottling?.delete?.(contextId);
+
+    for (const [pageId, mappedContextId] of this.pageContexts.entries()) {
+      if (mappedContextId === contextId) {
+        this.pageContexts.delete(pageId);
+        this.pages.delete(pageId);
+      }
+    }
+
+    for (const [routeId, info] of this.routes.entries()) {
+      if (info?.contextId === contextId) {
+        this.routes.delete(routeId);
+      }
+    }
+  }
+
+  async waitForPopup(context, command) {
+    const timeout = command.timeout || 30000;
+    const requestId = command.requestId || this.generateId('popup_req');
+
+    logger.info('Starting context popup coordination', {
+      contextId: command.contextId,
+      timeout,
+      requestId
+    });
+
+    // Create coordination phases
+    const phases = PopupCoordinator.createPopupPhases('context', {
+      pages: this.pages,
+      pageContexts: this.pageContexts,
+      setupPageEventListeners: this.setupPageEventListeners?.bind(this),
+      generateId: this.generateId.bind(this)
+    });
+
+    // Register the async command
+    globalCoordinator.registerAsyncCommand(requestId, phases);
+
+    try {
+      // Start execution with initial data
+      const result = await globalCoordinator.executeNextPhase(requestId, {
+        context,
+        contextId: command.contextId,
+        timeout,
+        requestId
+      });
+
+      if (result.type === 'callback') {
+        // Command is waiting for callback - this is expected for popup coordination
+        logger.debug('Context popup coordination waiting for callback', { requestId, callbackType: result.callbackType });
+        return result;
+      }
+
+      if (result.completed) {
+        const validation = PopupCoordinator.validatePopupResult(result.result);
+        if (!validation.valid) {
+          logger.error('Invalid popup result', { requestId, error: validation.error });
+          return { popupPageId: null };
+        }
+
+        return result.result;
+      }
+
+      return { popupPageId: null };
+
+    } catch (error) {
+      logger.error('Context popup coordination failed', {
+        requestId,
+        error: error.message
+      });
+      return { popupPageId: null };
+    }
+  }
+}
+
+class PageHandler extends BaseHandler {
+  async handle(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+
+    const registry = CommandRegistry.create({
+      pause: () => page.pause(),
+      close: () => this.closePage(command.pageId),
+      goto: () => this.goto(page, command),
+      evaluate: () => this.evaluate(page, command),
+      addInitScript: () => page.addInitScript(command.script),
+      emulateMedia: () => page.emulateMedia(command.options || {}),
+      requestGC: () => page.requestGC(),
+      waitForResponse: () => this.waitForResponse(page, command),
+      waitForRequest: () => this.waitForRequest(page, command),
+      requests: () => this.getRequests(page),
+      opener: () => this.getOpener(page, command),
+      consoleMessages: () => this.consoleMessages(page, command),
+      clearConsoleMessages: () => page.clearConsoleMessages(),
+      clearPageErrors: () => page.clearPageErrors(),
+      content: async () => ({ content: await page.content() }),
+      setContent: () => page.setContent(command.html, command.options),
+      querySelector: () => this.querySelector(page, command),
+      url: () => this.createValueResult(page.url()),
+      title: () => PromiseUtils.wrapValue(page.title()),
+      setViewportSize: () => page.setViewportSize(command.size),
+      viewportSize: () => this.createValueResult(page.viewportSize()),
+      setDefaultTimeout: () => page.setDefaultTimeout(command.timeout),
+      setDefaultNavigationTimeout: () => page.setDefaultNavigationTimeout(command.timeout),
+      dragAndDrop: () => page.dragAndDrop(command.source, command.target, command.options),
+      setExtraHTTPHeaders: () => page.setExtraHTTPHeaders(command.headers),
+      waitForURL: () => page.waitForURL(command.url, command.options),
+      waitForSelector: () => page.waitForSelector(command.selector, command.options),
+      waitForFunction: () => this.waitForFunction(page, command),
+      screenshot: () => PromiseUtils.wrapBinary(page.screenshot(command.options)),
+      pdf: () => PromiseUtils.wrapBinary(page.pdf(command.options || {})),
+      evaluateHandle: () => this.evaluateHandle(page, command),
+      addScriptTag: () => page.addScriptTag(command.options),
+      addStyleTag: () => page.addStyleTag(command.options).then(() => ({ success: true })),
+      handleDialog: () => this.handleDialog(command),
+      route: () => RouteUtils.setupRoute(page, command.pageId, command.url, this.generateId, this.routes, this.extractRequestData, this.sendFramedResponse, () => `route_${++this.routeCounter.value}`),
+      unroute: () => page.unroute(command.url),
+      unrouteAll: () => this.unrouteAll(page, command.pageId, command.options),
+      goBack: () => this.followNavigationRedirects(command.pageId, page, () => page.goBack(command.options)),
+      goForward: () => this.followNavigationRedirects(command.pageId, page, () => page.goForward(command.options)),
+      reload: () => this.followNavigationRedirects(command.pageId, page, () => page.reload(command.options)),
+      waitForLoadState: () => page.waitForLoadState(command.state || 'load', command.options),
+      frames: () => this.getFrames(page),
+      frame: () => this.getFrame(page, command),
+      waitForPopup: () => this.waitForPopup(page, command),
+      bringToFront: () => page.bringToFront(),
+      ariaSnapshot: () => PromiseUtils.wrapValue(page.ariaSnapshot(command.options)),
+      hideHighlight: () => page.hideHighlight(),
+      video: () => this.getVideo(page),
+    });
+
+    return await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, pageId: command.pageId });
+  }
+
+  async closePage(pageId) {
+    const page = this.pages.get(pageId);
+    if (page) { await page.close(); this.pages.delete(pageId); }
+  }
+
+  async getVideo(page) {
+    const video = page.video();
+    if (!video) return { video: null };
+    const videoId = this.generateId('video');
+    this.videos.set(videoId, video);
+    // path() resolves right away with the target file, which Playwright only
+    // fills in once the page closes.
+    return { video: { videoId, path: await video.path() } };
+  }
+
+  async goto(page, command) {
+    const gotoResponse = await this.followNavigationRedirects(
+      command.pageId,
+      page,
+      () => page.goto(command.url, command.options)
+    );
+    return { response: this.serializeResponse(gotoResponse) };
+  }
+
+  async evaluate(page, command) {
+    try {
+      const attempt = await page.evaluate(async ({ expression, arg }) => {
+        try {
+          const func = eval(`(${expression})`);
+          return typeof func === 'function' ? { ok: true, value: await func(arg) } : { ok: false };
+        } catch (e) {
+          return { ok: false, reason: e.message };
+        }
+      }, { expression: command.expression, arg: command.arg });
+
+      const result = attempt?.ok ? attempt.value : await page.evaluate(command.expression, command.arg);
+      const value = result === undefined ? null : result;
+      logger.debug('PAGE EVALUATE OK', { type: typeof value, method: attempt?.ok ? 'func' : 'expr' });
+      return { result: value };
+    } catch (error) {
+      logger.error('PAGE EVALUATE ERROR', { message: error.message });
+      throw error;
+    }
+  }
+
+  async waitForFunction(page, command) {
+    try {
+      let func;
+      try {
+        func = eval(`(${command.pageFunction})`);
+      } catch (e) {
+        func = command.pageFunction;
+      }
+
+      await page.waitForFunction(func, command.arg, command.options);
+    } catch (error) {
+      logger.error('PAGE WAITFORFUNCTION ERROR', { message: error.message });
+      throw error;
+    }
+  }
+
+  async waitForResponse(page, command) {
+    const jsAction = command.jsAction;
+    const [response] = await Promise.all([
+      page.waitForResponse(command.url, command.options),
+      jsAction ? page.evaluate(jsAction) : Promise.resolve(),
+    ]);
+    return { response: this.serializeResponse(response) };
+  }
+
+  async waitForRequest(page, command) {
+    const jsAction = command.jsAction;
+    const [request] = await Promise.all([
+      page.waitForRequest(command.url, command.options),
+      jsAction ? page.evaluate(jsAction) : Promise.resolve(),
+    ]);
+    return { request: this.extractRequestData(request) };
+  }
+
+  async getRequests(page) {
+    const requests = await page.requests();
+    return { requests: requests.map(request => this.extractRequestData(request)) };
+  }
+
+  async getOpener(page, command) {
+    const opener = await page.opener();
+    if (!opener) return { pageId: null };
+
+    for (const [pageId, candidate] of this.pages.entries()) {
+      if (candidate === opener) return { pageId };
+    }
+
+    // The opener predates this server's page map only when nothing ever
+    // surfaced it to PHP. Adopt it now rather than report "no opener".
+    const openerPageId = this.generateId('page');
+    this.pages.set(openerPageId, opener);
+    const contextId = this.pageContexts.get(command.pageId);
+    if (contextId) this.pageContexts.set(openerPageId, contextId);
+    if (this.setupPageEventListeners) this.setupPageEventListeners(opener, openerPageId);
+
+    return { pageId: openerPageId };
+  }
+
+  async consoleMessages(page, command) {
+    // An empty PHP options bag arrives as [], whose .filter is Array#filter.
+    // Forwarding that reaches Playwright as a function and fails validation.
+    const filter = command.options?.filter;
+    const messages = await page.consoleMessages(typeof filter === 'string' ? { filter } : {});
+    return { messages: messages.map(message => this.serializeConsoleMessage(message)) };
+  }
+
+  async unrouteAll(page, pageId, options) {
+    await page.unrouteAll(options || {});
+    RouteUtils.forgetRoutes(this.routes, pageId);
+  }
+
+  async querySelector(page, command) {
+    const element = await page.$(command.selector);
+    if (!element) return { elementHandleId: null };
+    const elementHandleId = this.generateId('element');
+    this.elementHandles.set(elementHandleId, element);
+    return { elementHandleId };
+  }
+
+  async evaluateHandle(page, command) {
+    return this.storeHandle(await page.evaluateHandle(evaluateHandleInPage, {
+      expression: command.expression,
+      arg: command.arg,
+    }));
+  }
+
+  async handleWebStorage(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    // Never index the page with the client-supplied name: only these two exist.
+    const storage = command.storage === 'sessionStorage' ? page.sessionStorage : page.localStorage;
+
+    const registry = CommandRegistry.create({
+      clear: () => storage.clear(),
+      getItem: () => PromiseUtils.wrapValue(storage.getItem(command.name)),
+      items: async () => ({ items: await storage.items() }),
+      removeItem: () => storage.removeItem(command.name),
+      setItem: () => storage.setItem(command.name, command.value)
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, pageId: command.pageId });
+    return this.wrapResult(result);
+  }
+
+  async handleScreencast(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+
+    // start, showOverlay and showActions resolve with a Disposable. It has no
+    // serialisable form, and stop, hideOverlays and hideActions already undo
+    // each of them, so it is dropped rather than shipped to PHP.
+    const registry = CommandRegistry.create({
+      start: async () => { await page.screencast.start(command.options || {}); },
+      stop: () => page.screencast.stop(),
+      showOverlay: async () => { await page.screencast.showOverlay(command.html, command.options || {}); },
+      showOverlays: () => page.screencast.showOverlays(),
+      hideOverlays: () => page.screencast.hideOverlays(),
+      showActions: async () => { await page.screencast.showActions(command.options || {}); },
+      hideActions: () => page.screencast.hideActions(),
+      showChapter: () => page.screencast.showChapter(command.title, command.options || {})
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, pageId: command.pageId });
+    return this.wrapResult(result);
+  }
+
+  async handleDialog(command) {
+    const dialog = this.dialogs.get(command.dialogId);
+    if (dialog) {
+      if (command.accept) await dialog.accept(command.promptText);
+      else await dialog.dismiss();
+      this.dialogs.delete(command.dialogId);
+    }
+    return { success: true };
+  }
+
+  async getFrames(page) {
+    const all = page.frames();
+    const main = page.mainFrame();
+    const framesOut = [];
+    for (const f of all) {
+      if (f === main) continue;
+      const selector = await this.buildFrameSelector(f, main);
+      framesOut.push({ selector });
+    }
+    return { frames: framesOut };
+  }
+
+  async getFrame(page, command) {
+    const opts = command.options || {};
+    const all = page.frames();
+    const main = page.mainFrame();
+    let target = null;
+    for (const f of all) {
+      if (f === main) continue;
+      if (this.frameMatches(f, opts)) { target = f; break; }
+    }
+    if (!target) return { selector: null };
+    const selector = await this.buildFrameSelector(target, main);
+    return { selector };
+  }
+
+  frameMatches(frame, opts) {
+    const fname = frame.name();
+    const furl = frame.url();
+    if (opts.name && fname === opts.name) return true;
+    if (opts.url && furl === opts.url) return true;
+    if (opts.urlRegex) {
+      try {
+        const regex = opts.urlRegex.startsWith('/') ? new RegExp(opts.urlRegex.slice(1, -1)) : new RegExp(opts.urlRegex);
+        return regex.test(furl);
+      } catch {}
+    }
+    return false;
+  }
+
+  async buildFrameSelector(frame, mainFrame) {
+    return FrameUtils.selectorForNativeFrame(frame, mainFrame);
+  }
+
+  async waitForPopup(page, command) {
+    const timeout = command.timeout || 30000;
+    const requestId = command.requestId || this.generateId('popup_req');
+
+    logger.info('Starting page popup coordination', {
+      pageId: command.pageId,
+      timeout,
+      requestId
+    });
+
+    // Create coordination phases
+    const phases = PopupCoordinator.createPopupPhases('page', {
+      pages: this.pages,
+      pageContexts: this.pageContexts,
+      setupPageEventListeners: this.setupPageEventListeners?.bind(this),
+      generateId: this.generateId.bind(this)
+    });
+
+    // Register the async command
+    globalCoordinator.registerAsyncCommand(requestId, phases);
+
+    try {
+      // Start execution with initial data
+      const result = await globalCoordinator.executeNextPhase(requestId, {
+        page,
+        pageId: command.pageId,
+        timeout,
+        requestId
+      });
+
+      if (result.type === 'callback') {
+        // Command is waiting for callback - this is expected for popup coordination
+        logger.debug('Page popup coordination waiting for callback', { requestId, callbackType: result.callbackType });
+        return result;
+      }
+
+      if (result.completed) {
+        const validation = PopupCoordinator.validatePopupResult(result.result);
+        if (!validation.valid) {
+          logger.error('Invalid popup result', { requestId, error: validation.error });
+          return { popupPageId: null };
+        }
+
+        // Ensure popup page is registered in main pages Map
+        const popupPageId = result.result.popupPageId;
+        const popup = result.result.popup;
+
+        if (popup && !this.pages.has(popupPageId)) {
+          // Re-register the popup page in the main pages Map
+          this.pages.set(popupPageId, popup);
+
+          // Set up context mapping
+          const contextId = this.pageContexts.get(command.pageId);
+          if (contextId) {
+            this.pageContexts.set(popupPageId, contextId);
+          }
+
+          logger.debug('Re-registered popup page in main pages Map', {
+            popupPageId,
+            contextId,
+            totalPages: this.pages.size
+          });
+        }
+
+        // Verify registration before returning
+        const isRegistered = this.pages.has(popupPageId);
+        logger.info('Page popup coordination completed', {
+          popupPageId,
+          isRegistered,
+          totalPages: this.pages.size
+        });
+
+        return result.result;
+      }
+
+      return { popupPageId: null };
+
+    } catch (error) {
+      logger.error('Page popup coordination failed', {
+        requestId,
+        error: error.message
+      });
+      return { popupPageId: null };
+    }
+  }
+}
+
+class LocatorHandler extends BaseHandler {
+  async handle(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    const locator = this.createLocator(page, command);
+
+    const registry = CommandRegistry.create({
+      check: () => locator.check(command.options),
+      uncheck: () => locator.uncheck(command.options),
+      clear: () => locator.clear(command.options),
+      click: () => this.followNavigationRedirects(command.pageId, page, () => locator.click(command.options)),
+      dblclick: () => locator.dblclick(command.options),
+      hover: () => locator.hover(command.options),
+      blur: () => locator.blur(),
+      scrollIntoViewIfNeeded: () => locator.scrollIntoViewIfNeeded(command.options),
+      focus: () => locator.focus(command.options),
+      fill: () => locator.fill(command.value, command.options),
+      type: () => locator.type(command.text, command.options),
+      press: () => locator.press(command.key, command.options),
+      pressSequentially: () => locator.pressSequentially(command.text, command.options),
+      waitFor: () => locator.waitFor(command.options),
+      setInputFiles: () => locator.setInputFiles(command.files, command.options),
+      ariaSnapshot: () => PromiseUtils.wrapValue(locator.ariaSnapshot(command.options)),
+      boundingBox: () => PromiseUtils.wrapValue(locator.boundingBox(command.options)),
+      dispatchEvent: () => locator.dispatchEvent(command.type, command.eventInit, command.options),
+      evaluateAll: () => this.evaluateAll(locator, command),
+      highlight: () => locator.highlight(),
+      hideHighlight: () => locator.hideHighlight(),
+      drop: () => locator.drop(this.decodeDropPayload(command.payload), command.options),
+      normalize: () => this.normalize(locator),
+      selectText: () => locator.selectText(command.options),
+      setChecked: () => locator.setChecked(command.checked, command.options),
+      tap: () => locator.tap(command.options),
+      isAttached: async () => this.createValueResult((await locator.count()) > 0),
+      isHidden: () => PromiseUtils.wrapValue(locator.isHidden()),
+      isDisabled: () => PromiseUtils.wrapValue(locator.isDisabled()),
+      isEditable: () => PromiseUtils.wrapValue(locator.isEditable()),
+      isVisible: () => PromiseUtils.wrapValue(locator.isVisible()),
+      isEnabled: () => PromiseUtils.wrapValue(locator.isEnabled()),
+      isChecked: () => PromiseUtils.wrapValue(locator.isChecked()),
+      textContent: () => PromiseUtils.wrapValue(locator.textContent()),
+      innerText: () => PromiseUtils.wrapValue(locator.innerText()),
+      innerHTML: () => PromiseUtils.wrapValue(locator.innerHTML()),
+      inputValue: () => PromiseUtils.wrapValue(locator.inputValue()),
+      count: () => PromiseUtils.wrapValue(locator.count()),
+      getAttribute: () => PromiseUtils.wrapValue(locator.getAttribute(command.name)),
+      selectOption: () => PromiseUtils.wrapValues(locator.selectOption(command.values, command.options)),
+      screenshot: () => PromiseUtils.wrapBinary(locator.screenshot(command.options)),
+      evaluate: () => this.evaluateLocator(locator, command),
+      evaluateHandle: () => this.evaluateHandle(locator, command),
+      waitForFunction: () => this.waitForFunction(locator, command),
+      dragAndDrop: () => this.handleDragAndDrop(page, command)
+    });
+
+    return await this.executeWithRegistry(registry, method);
+  }
+
+  createLocator(page, command) {
+    if (command.frameSelector) {
+      const frameLocator = FrameUtils.resolve(page, command.frameSelector);
+      return frameLocator.locator(command.selector);
+    }
+    return page.locator(command.selector);
+  }
+
+  // File buffers arrive base64 encoded because the PHP transport is JSON.
+  decodeDropPayload(payload) {
+    const source = payload || {};
+    const decoded = {};
+    if (source.data) decoded.data = source.data;
+    if (source.files) {
+      decoded.files = source.files.map(file => typeof file === 'string'
+        ? file
+        : { name: file.name, mimeType: file.mimeType, buffer: Buffer.from(file.buffer, 'base64') });
+    }
+    return decoded;
+  }
+
+  // The resolved selector is the only part of the normalized locator PHP can use,
+  // and Playwright exposes it nowhere else.
+  async normalize(locator) {
+    const normalized = await locator.normalize();
+    return this.createValueResult(normalized._selector);
+  }
+
+  async evaluateLocator(locator, command) {
+    try {
+      const count = await locator.count();
+      if (count === 0) return this.createValueResult(null);
+
+      let result;
+      try {
+        result = await locator.first().evaluate(command.expression, command.arg);
+      } catch (e) {
+        result = undefined;
+      }
+      if (result === undefined || result === null) {
+        try {
+          result = await locator.first().evaluate((element, payload) => {
+            try {
+              const func = eval(`(${payload.expression})`);
+              return typeof func === 'function' ? func(element, payload.arg) : null;
+            } catch {
+              return null;
+            }
+          }, { expression: command.expression, arg: command.arg });
+        } catch {}
+      }
+
+      return this.createValueResult(result === undefined ? null : result);
+    } catch (error) {
+      logger.error('Locator evaluate failed', { selector: command.selector, error: error.message });
+      throw error;
+    }
+  }
+
+  async evaluateAll(locator, command) {
+    try {
+      const result = await locator.evaluateAll(async (elements, payload) => {
+        const expression = payload.expression;
+        const value = eval(`(${expression})`);
+        return typeof value === 'function'
+          ? await value(elements, payload.arg)
+          : await eval(expression);
+      }, { expression: command.expression, arg: command.arg });
+
+      return this.createValueResult(result);
+    } catch (error) {
+      logger.error('Locator evaluateAll failed', { selector: command.selector, error: error.message });
+      throw error;
+    }
+  }
+
+  async evaluateHandle(locator, command) {
+    return this.storeHandle(await locator.evaluateHandle(evaluateHandleOnTarget, {
+      expression: command.expression,
+      arg: command.arg,
+    }));
+  }
+
+  async waitForFunction(locator, command) {
+    // Forwarded as a string: Playwright evaluates it in the page. Turning it
+    // into a function here would run it in this Node process instead.
+    await locator.waitForFunction(command.pageFunction, command.arg, command.options);
+    return { success: true };
+  }
+
+  async handleDragAndDrop(page, command) {
+    logger.debug('Handling drag and drop', {
+      selector: command.selector,
+      target: command.target,
+      options: command.options
+    });
+
+    try {
+      // Use page.dragAndDrop which is the native Playwright method
+      await page.dragAndDrop(command.selector, command.target, {
+        strict: true,
+        ...command.options
+      });
+
+      return this.createValueResult(true);
+    } catch (error) {
+      logger.error('Drag and drop failed', {
+        selector: command.selector,
+        target: command.target,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+}
+
+class InteractionHandler extends BaseHandler {
+  async handleMouse(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    const registry = CommandRegistry.create({
+      click: () => page.mouse.click(command.x, command.y, command.options),
+      dblclick: () => page.mouse.dblclick(command.x, command.y, command.options),
+      down: () => page.mouse.down(command.options),
+      move: () => page.mouse.move(command.x, command.y, command.options),
+      up: () => page.mouse.up(command.options),
+      wheel: () => page.mouse.wheel(command.deltaX, command.deltaY)
+    });
+    await this.executeWithRegistry(registry, method);
+  }
+
+  async handleKeyboard(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    const registry = CommandRegistry.create({
+      down: () => page.keyboard.down(command.key),
+      insertText: () => page.keyboard.insertText(command.text),
+      press: () => page.keyboard.press(command.key, command.options),
+      type: () => page.keyboard.type(command.text, command.options),
+      up: () => page.keyboard.up(command.key)
+    });
+    await this.executeWithRegistry(registry, method);
+  }
+
+  async handleTouchscreen(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    const registry = CommandRegistry.create({
+      tap: () => page.touchscreen.tap(command.x, command.y)
+    });
+    await this.executeWithRegistry(registry, method);
+  }
+}
+
+class FrameHandler extends BaseHandler {
+  async handle(command, method) {
+    const page = this.validateResource(this.pages, command.pageId, 'Page');
+    const isMainFrame = !command.frameSelector || command.frameSelector === ':root';
+    const frameLocator = isMainFrame ? null : FrameUtils.resolve(page, command.frameSelector);
+    const evalInFrame = (expression) => FrameUtils.evaluateInFrame(page, frameLocator, isMainFrame, expression);
+    const nativeFrame = () => FrameUtils.resolveNativeFrame(page, command.frameSelector);
+
+    const registry = CommandRegistry.create({
+      content: async () => ({ content: await (await nativeFrame()).content() }),
+      goto: async () => ({ response: this.serializeResponse(await (await nativeFrame()).goto(command.url, command.options)) }),
+      setContent: async () => { await (await nativeFrame()).setContent(command.html, command.options); return { success: true }; },
+      waitForFunction: () => this.waitForFunction(nativeFrame, command),
+      waitForURL: async () => { await (await nativeFrame()).waitForURL(command.url, command.options); return { success: true }; },
+      waitForNavigation: async () => ({ response: this.serializeResponse(await (await nativeFrame()).waitForNavigation(command.options)) }),
+      dragAndDrop: async () => { await (await nativeFrame()).dragAndDrop(command.source, command.target, command.options); return { success: true }; },
+      addScriptTag: async () => { await (await nativeFrame()).addScriptTag(command.options); return { success: true }; },
+      addStyleTag: async () => { await (await nativeFrame()).addStyleTag(command.options); return { success: true }; },
+      name: () => evalInFrame(() => window.name || '').then(v => this.createValueResult(v ?? '')),
+      evaluate: () => FrameUtils.evaluateInFrame(page, frameLocator, isMainFrame, command.expression, command.arg).then(result => ({ result })),
+      evaluateHandle: () => this.evaluateHandle(nativeFrame, command),
+      frameElement: () => this.frameElement(nativeFrame),
+      title: () => evalInFrame(() => document.title).then(v => this.createValueResult(v ?? '')),
+      url: () => evalInFrame(() => document.location.href).then(v => this.createValueResult(v ?? '')),
+      isDetached: () => this.checkDetached(isMainFrame, frameLocator),
+      waitForLoadState: () => isMainFrame ? page.waitForLoadState(command.state || 'load', command.options) : this.waitForLoadState(page, frameLocator, isMainFrame, command),
+      parent: () => this.getParent(isMainFrame, command.frameSelector),
+      children: () => this.getChildren(page, frameLocator, isMainFrame, command.frameSelector)
+    });
+
+    return await this.executeWithRegistry(registry, method);
+  }
+
+  async waitForFunction(nativeFrame, command) {
+    // Forwarded as a string: Playwright evaluates it in the page. Turning it
+    // into a function here would run it in this Node process instead.
+    await (await nativeFrame()).waitForFunction(command.pageFunction, command.arg, command.options);
+    return { success: true };
+  }
+
+  async evaluateHandle(nativeFrame, command) {
+    const frame = await nativeFrame();
+    return this.storeHandle(await frame.evaluateHandle(evaluateHandleInPage, {
+      expression: command.expression,
+      arg: command.arg,
+    }));
+  }
+
+  async frameElement(nativeFrame) {
+    const frame = await nativeFrame();
+    return this.storeHandle(await frame.frameElement());
+  }
+
+  async checkDetached(isMainFrame, frameLocator) {
+    if (isMainFrame) return this.createValueResult(false);
+    const count = await frameLocator.locator('html').count();
+    return this.createValueResult(count === 0);
+  }
+
+  async waitForLoadState(page, frameLocator, isMainFrame, command) {
+    const timeout = command.options?.timeout ?? 30000;
+    if (isMainFrame) {
+      await page.waitForLoadState(command.state || 'load', command.options || {});
+      return { success: true };
+    }
+    await frameLocator.locator('body').waitFor({ state: 'attached', timeout });
+    const evalInFrame = (expression) => FrameUtils.evaluateInFrame(page, frameLocator, isMainFrame, expression);
+    await FrameUtils.waitForReadyState(evalInFrame, command.state || 'load', timeout);
+    return { success: true };
+  }
+
+  getParent(isMainFrame, frameSelector) {
+    if (isMainFrame) return { selector: null };
+    const parts = String(frameSelector).split(' >> ').filter(Boolean);
+    parts.pop();
+    const parentSelector = parts.length ? parts.join(' >> ') : ':root';
+    return { selector: parentSelector };
+  }
+
+  async getChildren(page, frameLocator, isMainFrame, frameSelector) {
+    const selectorBuilder = (root) => {
+      const esc = (s) => (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (m) => `\\${m}`);
+      return Array.from(root.ownerDocument.querySelectorAll('iframe')).map((node, idx) => {
+        if (node.id) return `iframe#${esc(node.id)}`;
+        if (node.getAttribute('name')) return `iframe[name="${node.getAttribute('name')}"]`;
+        if (node.getAttribute('src')) return `iframe[src="${node.getAttribute('src')}"]`;
+        return `iframe >> nth=${idx}`;
+      });
+    };
+
+    const childSelectors = isMainFrame ? await page.evaluate(selectorBuilder) : await frameLocator.locator('html').evaluate(selectorBuilder) || [];
+    const prefix = isMainFrame ? '' : (String(frameSelector) + ' >> ');
+    const frames = childSelectors.map(sel => ({ selector: prefix + sel }));
+    return { frames };
+  }
+}
+
+class JSHandleHandler extends BaseHandler {
+  async handle(command, method) {
+    const handle = this.validateResource(this.elementHandles, command.handleId, 'JSHandle');
+
+    const registry = CommandRegistry.create({
+      asElement: () => this.asElement(handle),
+      dispose: () => this.dispose(handle, command.handleId),
+      evaluate: async () => ({ result: await handle.evaluate(evaluateHandleOnTarget, { expression: command.expression, arg: command.arg }) }),
+      evaluateHandle: async () => this.storeHandle(await handle.evaluateHandle(evaluateHandleOnTarget, { expression: command.expression, arg: command.arg })),
+      getProperties: () => this.getProperties(handle),
+      getProperty: async () => this.storeHandle(await handle.getProperty(command.propertyName)),
+      jsonValue: () => PromiseUtils.wrapValue(handle.jsonValue())
+    });
+
+    return await this.executeWithRegistry(registry, method);
+  }
+
+  async dispose(handle, handleId) {
+    await handle.dispose();
+    this.elementHandles.delete(handleId);
+    return { success: true };
+  }
+
+  asElement(handle) {
+    const element = handle.asElement();
+    return element ? this.storeHandle(element) : { handleId: null };
+  }
+
+  async getProperties(handle) {
+    const properties = {};
+    for (const [name, value] of (await handle.getProperties()).entries()) {
+      properties[name] = this.storeHandle(value).handleId;
+    }
+    return { properties };
+  }
+}
+
+class SelectorsHandler extends BaseHandler {
+  async handle(command, method) {
+    const playwright = require('playwright');
+
+    const registry = CommandRegistry.create({
+      register: async () => {
+        const script = command.script;
+        const options = command.options || {};
+        await playwright.selectors.register(command.name, script, options);
+        return {};
+      },
+      setTestIdAttribute: async () => {
+        playwright.selectors.setTestIdAttribute(command.attributeName);
+        return {};
+      }
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method });
+    return this.wrapResult(result);
+  }
+}
+
+class VideoHandler extends BaseHandler {
+  async handle(command, method) {
+    const video = this.validateResource(this.videos, command.videoId, 'Video');
+
+    const registry = CommandRegistry.create({
+      // Both calls wait for the recording to be flushed, which happens on page close.
+      saveAs: () => video.saveAs(command.path),
+      delete: async () => {
+        await video.delete();
+        this.videos.delete(command.videoId);
+      }
+    });
+
+    const result = await ErrorHandler.safeExecute(() => this.executeWithRegistry(registry, method), { method, videoId: command.videoId });
+    return this.wrapResult(result);
+  }
+}
+
+module.exports = { APIRequestHandler, ContextHandler, PageHandler, LocatorHandler, InteractionHandler, FrameHandler, JSHandleHandler, SelectorsHandler, VideoHandler };

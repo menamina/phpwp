@@ -3,6 +3,10 @@
         "codeception/codeception": "^5.3",
         "codeception/module-phpbrowser": "*",
         "codeception/module-asserts": "*",
-        "lucatume/wp-browser": "^4.0"
+        "lucatume/wp-browser": "^4.0",
+        "playwright-php/playwright": "^1.5"
+    },
+    "require": {
+        "vlucas/phpdotenv": "^5.7"
     }
 }

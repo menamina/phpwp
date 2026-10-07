@@ -1,0 +1,568 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Playwright Server Installer
+ * Installs Node.js dependencies for the Playwright server using Symfony Process
+ */
+
+$possibleFiles = [
+    __DIR__.'/../../../autoload.php',
+    __DIR__.'/../../autoload.php',
+    __DIR__.'/../../vendor/autoload.php',
+    __DIR__.'/../vendor/autoload.php',
+    __DIR__.'/vendor/autoload.php',
+];
+$file = null;
+
+foreach ($possibleFiles as $possibleFile) {
+    if (file_exists($possibleFile)) {
+        $file = $possibleFile;
+
+        break;
+    }
+}
+
+if (null === $file) {
+    throw new RuntimeException('Unable to locate autoload.php file.');
+}
+
+require_once $file;
+
+use Symfony\Component\Console\Output\ConsoleOutput;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Process\Exception\ProcessFailedException;
+use Symfony\Component\Process\Process;
+
+final class PlaywrightServerInstaller
+{
+    private const MIN_NODE_VERSION = '20.0.0';
+
+    private string $serverDir;
+
+    private OutputInterface $output;
+
+    private bool $verbose;
+
+    private bool $dryRun;
+
+    private bool $shouldInstallBrowsers;
+
+    private bool $withDeps;
+
+    /**
+     * @var list<string>
+     */
+    private array $browserTargets;
+
+    /**
+     * Cache of command availability checks.
+     *
+     * @var array<string, bool>
+     */
+    private array $commandAvailability = [];
+
+    /**
+     * @param list<string> $browserTargets
+     */
+    public function __construct(bool $verbose, bool $dryRun, bool $installBrowsers, bool $withDeps, array $browserTargets, private ?string $packageManagerBinary = null)
+    {
+        $this->serverDir = __DIR__;
+        $this->output = new ConsoleOutput();
+        $this->verbose = $verbose;
+        $this->dryRun = $dryRun;
+        $this->shouldInstallBrowsers = $installBrowsers;
+        $this->withDeps = $withDeps;
+        $this->browserTargets = $browserTargets;
+
+        if ($this->verbose) {
+            $this->output->setVerbosity(OutputInterface::VERBOSITY_VERBOSE);
+        }
+    }
+
+    public function install(): int
+    {
+        $this->output->writeln('<info>Installing Playwright Server...</info>');
+
+        if ($this->dryRun) {
+            $this->output->writeln('<comment>Dry run mode enabled. Installation commands will not be executed.</comment>');
+        }
+
+        try {
+            $this->checkRequirements();
+            $this->ensureServerDirectory();
+            $this->installNodeDependencies();
+
+            if ($this->dryRun) {
+                $this->output->writeln('[dry-run] Skipping verification step.');
+            } else {
+                $this->verifyInstallation();
+            }
+
+            if ($this->shouldInstallBrowsers) {
+                $this->installBrowserBinaries();
+            }
+
+            $this->output->writeln('✅ <info>Playwright Server installed successfully!</info>');
+
+            return 0;
+        } catch (Exception $e) {
+            $this->output->writeln("❌ <error>Installation failed: {$e->getMessage()}</error>");
+
+            if ($this->verbose && $e instanceof ProcessFailedException) {
+                $this->output->writeln('<error>Process stderr:</error>');
+                $this->output->writeln($e->getProcess()->getErrorOutput());
+            }
+
+            return 1;
+        }
+    }
+
+    private function checkRequirements(): void
+    {
+        $this->output->writeln('Checking requirements...', OutputInterface::VERBOSITY_VERBOSE);
+
+        try {
+            $nodeProcess = $this->runCommand(['node', '--version']);
+        } catch (ProcessFailedException $exception) {
+            throw new \RuntimeException('Node.js is required but not found in PATH.', 0, $exception);
+        }
+
+        $nodeVersion = trim($nodeProcess->getOutput());
+        $version = str_replace('v', '', $nodeVersion);
+
+        if (version_compare($version, self::MIN_NODE_VERSION, '<')) {
+            throw new \RuntimeException(sprintf('Node.js %s+ is required, found version %s. Please upgrade Node.js.', self::MIN_NODE_VERSION, $nodeVersion));
+        }
+
+        $this->output->writeln("✓ Node.js $nodeVersion found");
+
+        $packageManager = $this->detectPackageManager();
+
+        try {
+            $packageManagerProcess = $this->runCommand([$packageManager, '--version'], $this->serverDir);
+        } catch (ProcessFailedException $exception) {
+            throw new \RuntimeException("$packageManager is required but not found in PATH.", 0, $exception);
+        }
+
+        $packageManagerVersion = trim($packageManagerProcess->getOutput());
+        $this->output->writeln("✓ $packageManager $packageManagerVersion found");
+    }
+
+    private function ensureServerDirectory(): void
+    {
+        if (!is_dir($this->serverDir)) {
+            throw new \RuntimeException("Server directory not found: {$this->serverDir}");
+        }
+
+        if (!is_file($this->serverDir.'/package.json')) {
+            throw new \RuntimeException('package.json not found in server directory');
+        }
+
+        $this->output->writeln('✓ Server directory found');
+    }
+
+    private function installNodeDependencies(): void
+    {
+        $this->output->writeln('Installing Node.js dependencies...');
+
+        if ($this->isDependenciesUpToDate()) {
+            $this->output->writeln('✓ Dependencies already up to date');
+
+            return;
+        }
+
+        $packageManager = $this->detectPackageManager();
+        $command = $this->getInstallCommand($packageManager);
+
+        $this->output->writeln("Using $packageManager for installation", OutputInterface::VERBOSITY_VERBOSE);
+
+        $this->runCommand($command, $this->serverDir, 300, true);
+
+        $this->output->writeln('✓ Node.js dependencies installed');
+    }
+
+    private function isDependenciesUpToDate(): bool
+    {
+        $packageJsonPath = $this->serverDir.'/package.json';
+        $nodeModulesPath = $this->serverDir.'/node_modules';
+
+        if (!is_dir($nodeModulesPath)) {
+            return false;
+        }
+
+        $lockFiles = [
+                'package-lock.json',
+                'yarn.lock',
+                'pnpm-lock.yaml',
+        ];
+
+        $packageTime = filemtime($packageJsonPath);
+
+        foreach ($lockFiles as $lockFile) {
+            $lockPath = $this->serverDir.'/'.$lockFile;
+            if (is_file($lockPath) && filemtime($lockPath) >= $packageTime) {
+                return true;
+            }
+        }
+
+        
+        return false;
+    }
+
+    private function detectPackageManager(): string
+    {
+        return $this->getExplicitPackageManager() ?? $this->getDeclaredPackageManager() ?? $this->detectAvailablePackageManager();
+    }
+
+    private function getExplicitPackageManager(): ?string
+    {
+        if (null === $this->packageManagerBinary) {
+            return null;
+        }
+
+        $name = basename(str_replace('\\', '/', $this->packageManagerBinary));
+        if (!preg_match('/^(npm|yarn|pnpm)(?:\.(?:cmd|exe|bat))?$/D', $name, $matches)) {
+            throw new \RuntimeException('The package-manager binary must be named npm, yarn, or pnpm.');
+        }
+
+        return $matches[1];
+    }
+
+    private function detectAvailablePackageManager(): string
+    {
+        $pnpmLock = is_file($this->serverDir.'/pnpm-lock.yaml');
+        $yarnLock = is_file($this->serverDir.'/yarn.lock');
+        $pnpmAvailable = $this->isCommandAvailable('pnpm');
+        $yarnAvailable = $this->isCommandAvailable('yarn');
+
+        if ($pnpmLock && $pnpmAvailable) {
+            return 'pnpm';
+        }
+
+        if ($pnpmLock && !$pnpmAvailable) {
+            $this->output->writeln('⚠️ pnpm-lock.yaml detected but pnpm is not available; falling back to npm');
+        }
+
+        if ($yarnLock && $yarnAvailable) {
+            return 'yarn';
+        }
+
+        if ($yarnLock && !$yarnAvailable) {
+            $this->output->writeln('⚠️ yarn.lock detected but yarn is not available; falling back to npm');
+        }
+
+        if ($pnpmAvailable) {
+            return 'pnpm';
+        }
+
+        if ($yarnAvailable) {
+            return 'yarn';
+        }
+
+        return 'npm';
+    }
+
+    private function getDeclaredPackageManager(): ?string
+    {
+        $packageJsonPath = getcwd().'/package.json';
+
+        if (!is_file($packageJsonPath)) {
+            return null;
+        }
+
+        $packageJson = json_decode((string) file_get_contents($packageJsonPath), true);
+        $packageManager = is_array($packageJson) ? ($packageJson['packageManager'] ?? null) : null;
+
+        if (!is_string($packageManager)) {
+            return null;
+        }
+
+        $packageManager = explode('@', $packageManager, 2)[0];
+
+        return in_array($packageManager, ['npm', 'yarn', 'pnpm'], true) ? $packageManager : null;
+    }
+
+    private function getInstallCommand(string $packageManager): array
+    {
+        $hasPnpmLock = is_file($this->serverDir.'/pnpm-lock.yaml');
+        $hasYarnLock = is_file($this->serverDir.'/yarn.lock');
+        $hasNpmLock = is_file($this->serverDir.'/package-lock.json');
+
+        return match ($packageManager) {
+            'pnpm' => $hasPnpmLock
+                    ? ['pnpm', 'install', '--prod', '--frozen-lockfile', '--ignore-workspace', '--lockfile-dir', $this->serverDir]
+                    : ['pnpm', 'install', '--prod', '--no-frozen-lockfile', '--ignore-workspace', '--lockfile-dir', $this->serverDir],
+            'yarn' => $hasYarnLock
+                    ? ['yarn', 'install', '--production', '--frozen-lockfile']
+                    : ['yarn', 'install', '--production'],
+            default => $hasNpmLock
+                    ? ['npm', 'ci', '--only=production']
+                    : ['npm', 'install', '--only=production']
+        };
+    }
+
+    private function verifyInstallation(): void
+    {
+        $this->output->writeln('Verifying installation...', OutputInterface::VERBOSITY_VERBOSE);
+
+        $this->runCommand(['node', '-p', "require.resolve('playwright')"], $this->serverDir, 30);
+
+        if (!is_file($this->serverDir.'/playwright-server.js')) {
+            throw new \RuntimeException('Server entry script not found: playwright-server.js');
+        }
+
+        $this->output->writeln('✓ Server verified');
+    }
+
+    private function installBrowserBinaries(): void
+    {
+        $this->output->writeln('Installing Playwright browsers...');
+
+        $brandedTargets = array_intersect($this->browserTargets, [
+            'chrome',
+            'chrome-beta',
+            'msedge',
+            'msedge-beta',
+        ]);
+        if ([] !== $brandedTargets) {
+            $this->output->writeln('<comment>Warning: branded browsers are installed in the operating system\'s global location.</comment>');
+        }
+
+        $packageManager = $this->detectPackageManager();
+        $command = $this->getBrowserInstallCommand($packageManager);
+
+        $this->runCommand($command, $this->serverDir, null, true);
+
+        $this->output->writeln('✓ Browsers installed');
+    }
+
+    private function getBrowserInstallCommand(string $packageManager): array
+    {
+        $args = ['install'];
+
+        if ($this->withDeps) {
+            $args[] = '--with-deps';
+        }
+
+        array_push($args, ...$this->browserTargets);
+
+        return match ($packageManager) {
+            'pnpm' => array_merge(['pnpm', 'exec', 'playwright'], $args),
+            'yarn' => array_merge(['yarn', 'playwright'], $args),
+            default => array_merge(['npx', 'playwright'], $args),
+        };
+    }
+
+    /**
+     * @param array<int, string> $command
+     */
+    private function runCommand(array $command, ?string $cwd = null, ?int $timeout = 60, bool $allowDryRun = false): Process
+    {
+        $process = new Process($this->getExecutableCommand($command), $cwd);
+        $process->setTimeout($timeout);
+
+        $this->output->writeln(sprintf('Running command: %s', $process->getCommandLine()), OutputInterface::VERBOSITY_VERBOSE);
+
+        if ($allowDryRun && $this->dryRun) {
+            $this->output->writeln(sprintf('[dry-run] Would execute: %s', $process->getCommandLine()));
+
+            return $process;
+        }
+
+        $callback = $this->verbose
+            ? function (string $type, string $buffer): void {
+                $this->output->write($buffer);
+            }
+            : null;
+
+        $process->run($callback);
+
+        if (!$process->isSuccessful()) {
+            throw new ProcessFailedException($process);
+        }
+
+        return $process;
+    }
+
+    private function getExecutableCommand(array $command): array
+    {
+        if (null === $this->packageManagerBinary) {
+            return $command;
+        }
+
+        $packageManager = $this->getExplicitPackageManager();
+        if ('npm' === $packageManager && 'npx' === $command[0]) {
+            $command = array_merge(['npm', 'exec', '--'], array_slice($command, 1));
+        }
+
+        if ($command[0] !== $packageManager) {
+            return $command;
+        }
+
+        $command[0] = $this->resolvePackageManagerBinary($this->packageManagerBinary);
+
+        return $command;
+    }
+
+    private function resolvePackageManagerBinary(string $binary): string
+    {
+        if (!str_contains($binary, '/') && !str_contains($binary, '\\')) {
+            return $binary;
+        }
+
+        // Resolve relative directories before changing cwd, preserving the executable's symlink name.
+        $directory = realpath(dirname($binary));
+        $binary = false === $directory ? $binary : $directory.DIRECTORY_SEPARATOR.basename($binary);
+        if (false === $directory || !is_file($binary) || !is_executable($binary)) {
+            throw new \RuntimeException('The package-manager binary was not found or is not executable: '.$this->packageManagerBinary);
+        }
+
+        return $binary;
+    }
+
+    private function isCommandAvailable(string $command): bool
+    {
+        if (array_key_exists($command, $this->commandAvailability)) {
+            return $this->commandAvailability[$command];
+        }
+
+        $process = new Process([$command, '--version']);
+        $process->run();
+
+        return $this->commandAvailability[$command] = $process->isSuccessful();
+    }
+}
+
+$argv = $_SERVER['argv'] ?? [];
+$args = array_slice($argv, 1);
+
+$verbose = false;
+$dryRun = false;
+$installBrowsers = false;
+$withDeps = false;
+$help = false;
+$browserTargets = [];
+$defaultBrowsersRequested = false;
+$packageManagerBinary = null;
+$supportedBrowserTargets = [
+    'chromium',
+    'firefox',
+    'webkit',
+    'chrome',
+    'chrome-beta',
+    'msedge',
+    'msedge-beta',
+];
+
+for ($index = 0; $index < count($args); ++$index) {
+    $arg = $args[$index];
+    $option = explode('=', $arg, 2);
+    if ('--package-manager-bin' === $option[0]) {
+        $packageManagerBinary = $option[1] ?? ($args[++$index] ?? '');
+        if ('' === $packageManagerBinary || str_starts_with($packageManagerBinary, '-')) {
+            fwrite(STDERR, "The --package-manager-bin option requires a value.\n");
+            exit(2);
+        }
+
+        continue;
+    }
+
+    switch ($arg) {
+        case '-v':
+        case '--verbose':
+            $verbose = true;
+            break;
+        case '-h':
+        case '--help':
+            $help = true;
+            break;
+        case '--dry-run':
+            $dryRun = true;
+            break;
+        case '--browsers':
+            $installBrowsers = true;
+            $defaultBrowsersRequested = true;
+            break;
+        case '--with-deps':
+            $installBrowsers = true;
+            $withDeps = true;
+            break;
+        default:
+            if (str_starts_with($arg, '-')) {
+                throw new \InvalidArgumentException(sprintf('Unknown option: %s', $arg));
+            }
+
+            if (!in_array($arg, $supportedBrowserTargets, true)) {
+                fwrite(STDERR, sprintf(
+                    "Unknown browser target: %s. Supported browsers: %s.\n",
+                    $arg,
+                    implode(', ', $supportedBrowserTargets),
+                ));
+
+                exit(2);
+            }
+
+            $installBrowsers = true;
+            if (!in_array($arg, $browserTargets, true)) {
+                $browserTargets[] = $arg;
+            }
+    }
+}
+
+if ($defaultBrowsersRequested && [] !== $browserTargets) {
+    fwrite(STDERR, "The --browsers option cannot be combined with explicit browser targets.\n");
+
+    exit(2);
+}
+
+if ($help) {
+    echo "Playwright Server Installer\n";
+    echo "\n";
+    echo "Usage: playwright-install [options] [browser...]\n";
+    echo "\n";
+    echo "Options:\n";
+    echo "  -v, --verbose     Show detailed output\n";
+    echo "  -h, --help        Show this help message\n";
+    echo "  --dry-run         Print commands without executing install steps\n";
+    echo "  --browsers        Install Playwright's default browsers\n";
+    echo "  --with-deps       Install selected browsers and system dependencies\n";
+    echo "  --package-manager-bin=PATH  Use a specific npm, yarn, or pnpm executable\n";
+    echo "\n";
+    echo "Managed browser targets:\n";
+    echo "  chromium          Playwright's bundled Chromium browser\n";
+    echo "  firefox           Playwright's Firefox browser\n";
+    echo "  webkit            Playwright's WebKit browser\n";
+    echo "\n";
+    echo "Branded browser targets:\n";
+    echo "  chrome            Google Chrome stable\n";
+    echo "  chrome-beta       Google Chrome Beta\n";
+    echo "  msedge            Microsoft Edge stable\n";
+    echo "  msedge-beta       Microsoft Edge Beta\n";
+    echo "\n";
+    echo "Branded browsers are installed in the operating system's global location.\n";
+    echo "They are distinct from Playwright's managed Chromium browser.\n";
+    echo "\n";
+    echo "Requirements:\n";
+    echo "  - Node.js 20+ (for optimal performance and security)\n";
+    echo "  - npm, yarn, or pnpm\n";
+    echo "\n";
+    echo "An explicit package-manager binary overrides automatic selection.\n";
+    echo "Otherwise, this script selects the package-manager name declared by the current project.\n";
+    echo "It uses the selected executable and does not install or enforce the declared version.\n";
+    echo "Without a supported declaration, detection uses server lockfiles and available executables.\n";
+    echo "\n";
+    echo "Environment:\n";
+    echo "  PLAYWRIGHT_BROWSERS_PATH   Custom directory for Playwright browser binaries\n";
+    echo "\n";
+    echo "Examples:\n";
+    echo "  playwright-install --browsers\n";
+    echo "  playwright-install firefox\n";
+    echo "  playwright-install chromium webkit\n";
+    echo "  playwright-install chrome\n";
+    echo "  playwright-install --package-manager-bin=/path/to/npm --browsers\n";
+    exit(0);
+}
+
+$installer = new PlaywrightServerInstaller($verbose, $dryRun, $installBrowsers, $withDeps, $browserTargets, $packageManagerBinary);
+exit($installer->install());

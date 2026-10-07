@@ -32,12 +32,12 @@ return array(
 		'style' => 'file:./style-index.css',
 		'render' => 'file:./render.php'
 	),
-	'wait-times' => array(
+	'react-plugin' => array(
 		'$schema' => 'https://schemas.wp.org/trunk/block.json',
 		'apiVersion' => 3,
 		'name' => 'create-block/wait-times',
 		'version' => '0.1.0',
-		'title' => 'Wait Times',
+		'title' => 'React Plugin',
 		'category' => 'widgets',
 		'icon' => 'smiley',
 		'description' => 'Wait Times.',

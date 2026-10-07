@@ -17,6 +17,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Exit if accessed directly.
 }
 
+// Load Composer autoloader
+if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
+	require_once __DIR__ . '/vendor/autoload.php';
+}
+
 // Include admin settings page
 require_once plugin_dir_path( __FILE__ ) . 'admin-settings.php';
 
@@ -223,8 +228,16 @@ function getFlightAPIData($airport, $limit){
     $api_key = get_option('afh_api_key', '');
 
     if (empty($api_key)) {
+        $api_key = $_ENV['AVIATIONSTACK_API_KEY'] ?? '';
+    }
+
+    if (empty($api_key)) {
+        $api_key = defined('AVIATIONSTACK_API_KEY') ? AVIATIONSTACK_API_KEY : '';
+    }
+
+    if (empty($api_key)) {
         return [
-            'error' => 'API key not configured. Please add your API key in Settings → Airport Info Hub.',
+            'error' => 'API key not configured!!!!!!. Please add your API key in Settings → Airport Info Hub.',
             'data' => []
         ];
     }
@@ -241,6 +254,17 @@ function getFlightAPIData($airport, $limit){
     }
 
     $all_data = json_decode(wp_remote_retrieve_body($response), true);
+
+    // Debug: Log what the API returns
+    error_log('Aviation API Response: ' . print_r($all_data, true));
+
+    // Check for API errors
+    if (isset($all_data['error'])) {
+        return [
+            'error' => 'API Error: ' . ($all_data['error']['message'] ?? 'Unknown error'),
+            'data' => []
+        ];
+    }
 
     if (!empty($airport) && isset($all_data['data'])) {
         $filtered = [];

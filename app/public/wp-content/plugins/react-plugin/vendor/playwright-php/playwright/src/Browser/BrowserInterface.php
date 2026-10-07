@@ -1,0 +1,64 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the community-maintained Playwright PHP project.
+ * It is not affiliated with or endorsed by Microsoft.
+ *
+ * (c) 2025-Present - Playwright PHP - https://github.com/playwright-php
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace Playwright\Browser;
+
+use Playwright\Page\PageInterface;
+
+interface BrowserInterface
+{
+    public function context(): BrowserContextInterface;
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function newContext(array $options = []): BrowserContextInterface;
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    public function newPage(array $options = []): PageInterface;
+
+    public function close(): void;
+
+    /**
+     * @return array<BrowserContextInterface>
+     */
+    public function contexts(): array;
+
+    /**
+     * The browser engine this instance was launched with.
+     */
+    public function browserType(): BrowserType;
+
+    public function isConnected(): bool;
+
+    public function version(): string;
+
+    /**
+     * Exposes this browser so other Playwright clients can connect to it and drive it.
+     *
+     * Binding twice without an intervening unbind() is an error.
+     *
+     * @param array{host?: string, port?: int, workspaceDir?: string, metadata?: array<string, mixed>} $options
+     *
+     * @return string the endpoint to connect to: a local socket path, or a ws:// URL when host or port is given
+     */
+    public function bind(string $title, array $options = []): string;
+
+    /**
+     * Tears down the server started by bind(); does nothing when the browser is not bound.
+     */
+    public function unbind(): void;
+}

@@ -10,14 +10,24 @@
  * Part of react-plugin
  */
 
+// Load .env file if it exists
+if (file_exists(__DIR__ . '/.env')) {
+    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
+    $dotenv->load();
+}
+
 // Register settings with show_in_rest so they appear at /wp/v2/settings
 function afh_register_settings() {
+    // Get API key from environment variable, fallback to constant, then empty string
+    $default_api_key = $_ENV['AVIATIONSTACK_API_KEY'] ??
+                       (defined('AVIATIONSTACK_API_KEY') ? AVIATIONSTACK_API_KEY : '');
+
     register_setting('afh_settings', 'afh_api_key', [
         'type' => 'string',
         'description' => 'API key for aviation data service',
         'sanitize_callback' => 'sanitize_text_field',
         'show_in_rest' => true,
-        'default' => '',
+        'default' => $default_api_key,
     ]);
 
     register_setting('afh_settings', 'afh_default_airport', [
