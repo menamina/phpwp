@@ -17,25 +17,36 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
+          extensions: sqlite3, mbstring, xml, curl
 
       - name: Install dependencies
         working-directory: app/public/wp-content/plugins/react-plugin
         run: composer install
 
-      - name: Start WordPress with Docker
-        run: docker compose up -d
+      - name: Install Playwright browsers
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: vendor/bin/playwright-install chromium
 
-      - name: Wait for WordPress to be ready
-        run: sleep 15
+      - name: Start built-in PHP server for WordPress
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: |
+          nohup php -S localhost:44969 -t tests/_wordpress > server.log 2>&1 &
+          sleep 5
 
       - name: Run Codeception tests
         working-directory: app/public/wp-content/plugins/react-plugin
         run: vendor/bin/codecept run
 
-      - name: Run Playwright auth setup
+      - name: Set up Playwright authentication
         working-directory: app/public/wp-content/plugins/react-plugin
+        env:
+          WP_TEST_URL: http://localhost:44969
+          WP_TEST_USER: ${{ secrets.WP_TEST_USER }}
+          WP_TEST_PASSWORD: ${{ secrets.WP_TEST_PASSWORD }}
         run: php tests/Playwright/authScript.php
 
       - name: Run Playwright tests
         working-directory: app/public/wp-content/plugins/react-plugin
+        env:
+          WP_TEST_URL: http://localhost:44969
         run: vendor/bin/phpunit tests/Playwright/
