@@ -2,9 +2,9 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -16,14 +16,14 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: "8.2"
 
       - name: Install dependencies
         working-directory: app/public/wp-content/plugins/react-plugin
         run: composer install
 
       - name: Start WordPress with Docker
-        run: docker-compose up -d
+        run: docker compose up -d
 
       - name: Wait for WordPress to be ready
         run: sleep 15
