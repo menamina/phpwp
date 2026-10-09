@@ -1,0 +1,41 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+
+      - name: Install dependencies
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: composer install
+
+      - name: Start WordPress with Docker
+        run: docker-compose up -d
+
+      - name: Wait for WordPress to be ready
+        run: sleep 15
+
+      - name: Run Codeception tests
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: vendor/bin/codecept run
+
+      - name: Run Playwright auth setup
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: php tests/Playwright/authScript.php
+
+      - name: Run Playwright tests
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: vendor/bin/phpunit tests/Playwright/
