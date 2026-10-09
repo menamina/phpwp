@@ -12,6 +12,6 @@ abstract class AuthenticatedTestCase extends PlaywrightTestCase
         parent::setUp();
 
         // Load the saved authentication state before each test
-        $this->context->loadStorageState(__DIR__.'/../auth.json');
+        $this->context->loadStorageState(__DIR__.'/auth.json');
     }
 }

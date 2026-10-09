@@ -8,21 +8,18 @@ namespace Tests\Playwright;
 
 require_once __DIR__ . '/../../vendor/autoload.php';
 
-use PHPUnit\Framework\TestCase;
-use Playwright\Playwright;
+use Playwright\Testing\PlaywrightTestCase;
 use function Playwright\Testing\expect;
 
-class WaitTimesMapTest extends TestCase
+class WaitTimesMapTest extends PlaywrightTestCase
 {
-    private $context;
-    private $page;
     private string $baseUrl;
     private int $blockPostId;
     private int $shortcodePostId;
 
     protected function setUp(): void
     {
-        parent::setUp();
+        parent::setUp(); // This automatically creates $this->page and $this->context
 
         // Load .env file
         if (file_exists(__DIR__ . '/.env')) {
@@ -39,15 +36,10 @@ class WaitTimesMapTest extends TestCase
         // Create test posts
         $this->blockPostId = $this->createBlockPost('ORD');
         $this->shortcodePostId = $this->createShortcodePost('SEA');
-
-        $this->context = Playwright::chromium(['headless' => true]);
-        $this->page = $this->context->newPage();
     }
 
     protected function tearDown(): void
     {
-        $this->context->close();
-
         // Clean up test posts
         if (isset($this->blockPostId)) {
             wp_delete_post($this->blockPostId, true);
@@ -56,7 +48,7 @@ class WaitTimesMapTest extends TestCase
             wp_delete_post($this->shortcodePostId, true);
         }
 
-        parent::tearDown();
+        parent::tearDown(); // This automatically closes the browser
     }
 
     private function loadWordPress(): void
