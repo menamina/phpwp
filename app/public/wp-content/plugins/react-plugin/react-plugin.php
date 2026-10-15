@@ -255,10 +255,6 @@ function getFlightAPIData($airport, $limit){
 
     $all_data = json_decode(wp_remote_retrieve_body($response), true);
 
-    // Debug: Log what the API returns
-    error_log('Aviation API Response: ' . print_r($all_data, true));
-
-    // Check for API errors
     if (isset($all_data['error'])) {
         return [
             'error' => 'API Error: ' . ($all_data['error']['message'] ?? 'Unknown error'),
