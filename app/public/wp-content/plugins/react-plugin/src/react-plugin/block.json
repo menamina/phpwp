@@ -3,7 +3,7 @@
 	"apiVersion": 3,
 	"name": "create-block/wait-times",
 	"version": "0.1.0",
-	"title": "React Plugin",
+	"title": "Wait Times",
 	"category": "widgets",
 	"icon": "smiley",
 	"description": "Wait Times.",
