@@ -9,12 +9,12 @@ modules:
         - lucatume\WPBrowser\Module\WPLoader
     config:
         lucatume\WPBrowser\Module\WPLoader:
-           wpRootFolder: "%WORDPRESS_ROOT_DIR%" 
-           dbUrl: '%WORDPRESS_DB_URL%'
+           wpRootFolder: "%env(WORDPRESS_ROOT_DIR)%"
+           dbUrl: '%env(WORDPRESS_DB_URL)%'
            wpDebug: true
-           tablePrefix: '%TEST_TABLE_PREFIX%'
-           domain: '%WORDPRESS_DOMAIN%'
-           adminEmail: 'admin@%WORDPRESS_DOMAIN%'
+           tablePrefix: '%env(TEST_TABLE_PREFIX)%'
+           domain: '%env(WORDPRESS_DOMAIN)%'
+           adminEmail: 'admin@%env(WORDPRESS_DOMAIN)%'
            title: 'Integration Tests'
            plugins: ['./react-plugin.php']
            theme: ''
