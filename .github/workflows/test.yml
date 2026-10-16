@@ -23,6 +23,10 @@ jobs:
         working-directory: app/public/wp-content/plugins/react-plugin
         run: composer install
 
+      - name: Create database directory
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: mkdir -p tests/_wordpress/data
+
       - name: Install Playwright browsers
         working-directory: app/public/wp-content/plugins/react-plugin
         run: vendor/bin/playwright-install chromium
