@@ -27,6 +27,24 @@ jobs:
         working-directory: app/public/wp-content/plugins/react-plugin
         run: mkdir -p tests/_wordpress/data
 
+      - name: Create .env file for tests
+        working-directory: app/public/wp-content/plugins/react-plugin
+        run: |
+          cat > tests/.env << 'EOF'
+          WORDPRESS_ROOT_DIR=tests/_wordpress
+          WORDPRESS_DB_URL=sqlite:tests/_wordpress/data/db.sqlite
+          TEST_TABLE_PREFIX=test_
+          WORDPRESS_TABLE_PREFIX=wp_
+          WORDPRESS_URL=http://localhost:44969
+          WORDPRESS_DOMAIN=localhost:44969
+          WORDPRESS_ADMIN_PATH=/wp-admin
+          WORDPRESS_ADMIN_USER=admin
+          WORDPRESS_ADMIN_PASSWORD=password
+          CHROMEDRIVER_HOST=localhost
+          CHROMEDRIVER_PORT=9515
+          BUILTIN_SERVER_PORT=44969
+          EOF
+
       - name: Install Playwright browsers
         working-directory: app/public/wp-content/plugins/react-plugin
         run: vendor/bin/playwright-install chromium
